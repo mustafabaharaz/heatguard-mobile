@@ -1,10 +1,11 @@
 import { View, Text, TouchableOpacity, ScrollView, RefreshControl, Alert, Linking, StyleSheet, ActivityIndicator } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { AlertCircle, Thermometer, RefreshCw, MapPin } from 'lucide-react-native';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import EmergencySOSModal from '../../src/components/emergency/EmergencySOSModal';
 import { getCurrentWeather, WeatherData } from '../../src/services/api/weatherApi';
 import { useLocation } from '../../src/lib/hooks/useLocation';
+import { scheduleHeatAlert } from '../../src/services/notifications/push';
 
 const COLORS = {
   glacier: '#8ECAE6',
@@ -19,6 +20,7 @@ export default function HomeScreen() {
   const [showEmergencyModal, setShowEmergencyModal] = useState(false);
   const [weather, setWeather] = useState<WeatherData | null>(null);
   const [loading, setLoading] = useState(true);
+  const lastAlertTemp = useRef<number>(0);
   
   const { location, error: locationError } = useLocation();
   
@@ -28,6 +30,14 @@ export default function HomeScreen() {
     try {
       const data = await getCurrentWeather(location.lat, location.lon);
       setWeather(data);
+      
+      // Auto-alert on danger thresholds
+      const temp = data.temperature;
+      if (temp >= 35 && temp !== lastAlertTemp.current) {
+        const riskLevel = temp >= 40 ? 'critical' : temp >= 35 ? 'high' : 'caution';
+        await scheduleHeatAlert(temp, riskLevel);
+        lastAlertTemp.current = temp;
+      }
     } catch (error) {
       console.error('Failed to fetch weather:', error);
     } finally {
@@ -37,6 +47,10 @@ export default function HomeScreen() {
   
   useEffect(() => {
     fetchWeather();
+    
+    // Auto-refresh every 5 minutes
+    const interval = setInterval(fetchWeather, 5 * 60 * 1000);
+    return () => clearInterval(interval);
   }, [fetchWeather]);
   
   const temperature = weather?.temperature || 38;
@@ -168,7 +182,7 @@ export default function HomeScreen() {
 
         <View style={styles.footer}>
           <RefreshCw size={14} color="#6B7280" />
-          <Text style={styles.footerText}>Pull down to refresh</Text>
+          <Text style={styles.footerText}>Auto-refresh every 5 min • Pull to refresh now</Text>
         </View>
       </ScrollView>
 
