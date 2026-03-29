@@ -1,7 +1,8 @@
-import { View, Text, TouchableOpacity, Modal } from 'react-native';
-import { AlertCircle, Phone, Users, MapPin, X } from 'lucide-react-native';
+import { Modal, View, Text, TouchableOpacity, StyleSheet, Linking, Alert } from 'react-native';
+import { X, Phone, Users, MapPin } from 'lucide-react-native';
+import { getPrimaryContact } from '../../features/emergency/storage/contactStorage';
 
-interface EmergencySOSModalProps {
+interface Props {
   visible: boolean;
   onClose: () => void;
   onCallEmergency: () => void;
@@ -9,127 +10,124 @@ interface EmergencySOSModalProps {
   onShareLocation: () => void;
 }
 
+const COLORS = {
+  lava: '#E63946',
+  ocean: '#1D3557',
+  glacier: '#8ECAE6',
+  success: '#10B981',
+};
+
 export default function EmergencySOSModal({
   visible,
   onClose,
   onCallEmergency,
   onContactFamily,
-  onShareLocation
-}: EmergencySOSModalProps) {
+  onShareLocation,
+}: Props) {
+  const handleContactFamily = () => {
+    const primaryContact = getPrimaryContact();
+    
+    if (!primaryContact) {
+      Alert.alert(
+        'No Emergency Contacts',
+        'Please add emergency contacts in Settings → Emergency Contacts',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Add Now', onPress: onClose },
+        ]
+      );
+      return;
+    }
+
+    Alert.alert(
+      `Contact ${primaryContact.name}?`,
+      `Call or text ${primaryContact.phoneNumber}`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Call',
+          onPress: () => {
+            onClose();
+            Linking.openURL(`tel:${primaryContact.phoneNumber}`);
+          },
+        },
+        {
+          text: 'Text',
+          onPress: () => {
+            onClose();
+            Linking.openURL(`sms:${primaryContact.phoneNumber}?body=🆘 Emergency alert from HeatGuard. I need help due to heat conditions.`);
+          },
+        },
+      ]
+    );
+  };
+
   return (
     <Modal
       visible={visible}
+      animationType="slide"
       transparent
-      animationType="fade"
       onRequestClose={onClose}
     >
-      {/* Backdrop */}
-      <View className="flex-1 bg-black/60 justify-end">
-        <View className="bg-white rounded-t-3xl p-6">
-          {/* Header */}
-          <View className="flex-row items-center justify-between mb-6">
-            <View className="flex-row items-center">
-              <AlertCircle size={28} color="#E63946" strokeWidth={2.5} />
-              <Text className="text-2xl font-bold text-thermal-ocean ml-3">
-                Emergency SOS
-              </Text>
-            </View>
-            <TouchableOpacity
-              onPress={onClose}
-              className="p-2 active:opacity-60"
-              accessibilityLabel="Close emergency menu"
-              accessibilityRole="button"
-            >
-              <X size={24} color="#6B7280" />
+      <View style={styles.overlay}>
+        <View style={styles.modal}>
+          <View style={styles.header}>
+            <Text style={styles.title}>🆘 Emergency SOS</Text>
+            <TouchableOpacity onPress={onClose} style={styles.closeButton}>
+              <X size={24} color={COLORS.ocean} />
             </TouchableOpacity>
           </View>
 
-          {/* Warning Message */}
-          <View className="bg-thermal-lava/10 rounded-2xl p-4 mb-6">
-            <Text className="text-base text-thermal-lava font-semibold">
-              ⚠️ Choose an emergency action below
-            </Text>
+          <Text style={styles.subtitle}>
+            Choose an emergency action below
+          </Text>
+
+          <View style={styles.actions}>
+            <TouchableOpacity
+              style={[styles.actionButton, styles.emergencyButton]}
+              onPress={onCallEmergency}
+            >
+              <Phone size={32} color="white" />
+              <Text style={styles.actionText}>Call 911</Text>
+              <Text style={styles.actionSubtext}>Emergency services</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.actionButton, styles.contactButton]}
+              onPress={handleContactFamily}
+            >
+              <Users size={32} color="white" />
+              <Text style={styles.actionText}>Contact Family</Text>
+              <Text style={styles.actionSubtext}>Alert emergency contacts</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.actionButton, styles.locationButton]}
+              onPress={onShareLocation}
+            >
+              <MapPin size={32} color="white" />
+              <Text style={styles.actionText}>Share Location</Text>
+              <Text style={styles.actionSubtext}>Send GPS coordinates</Text>
+            </TouchableOpacity>
           </View>
-
-          {/* Emergency Actions - All ≥44pt touch targets */}
-          
-          {/* Call 911 */}
-          <TouchableOpacity
-            onPress={onCallEmergency}
-            className="bg-thermal-lava rounded-2xl p-5 mb-4 flex-row items-center active:opacity-80"
-            style={{ minHeight: 44 }}
-            accessibilityLabel="Call 911 emergency services"
-            accessibilityRole="button"
-          >
-            <View className="bg-white/20 p-3 rounded-full">
-              <Phone size={24} color="white" />
-            </View>
-            <View className="flex-1 ml-4">
-              <Text className="text-white text-lg font-bold">
-                Call 911
-              </Text>
-              <Text className="text-white/90 text-sm mt-1">
-                Emergency medical services
-              </Text>
-            </View>
-          </TouchableOpacity>
-
-          {/* Contact Emergency Contacts */}
-          <TouchableOpacity
-            onPress={onContactFamily}
-            className="bg-thermal-ember rounded-2xl p-5 mb-4 flex-row items-center active:opacity-80"
-            style={{ minHeight: 44 }}
-            accessibilityLabel="Contact emergency contacts"
-            accessibilityRole="button"
-          >
-            <View className="bg-white/20 p-3 rounded-full">
-              <Users size={24} color="white" />
-            </View>
-            <View className="flex-1 ml-4">
-              <Text className="text-white text-lg font-bold">
-                Contact Family
-              </Text>
-              <Text className="text-white/90 text-sm mt-1">
-                Alert your emergency contacts
-              </Text>
-            </View>
-          </TouchableOpacity>
-
-          {/* Share Location */}
-          <TouchableOpacity
-            onPress={onShareLocation}
-            className="bg-thermal-desert rounded-2xl p-5 mb-4 flex-row items-center active:opacity-80"
-            style={{ minHeight: 44 }}
-            accessibilityLabel="Share your location with emergency contacts"
-            accessibilityRole="button"
-          >
-            <View className="bg-white/20 p-3 rounded-full">
-              <MapPin size={24} color="white" />
-            </View>
-            <View className="flex-1 ml-4">
-              <Text className="text-white text-lg font-bold">
-                Share Location
-              </Text>
-              <Text className="text-white/90 text-sm mt-1">
-                Send GPS coordinates to contacts
-              </Text>
-            </View>
-          </TouchableOpacity>
-
-          {/* Cancel Button */}
-          <TouchableOpacity
-            onPress={onClose}
-            className="bg-gray-100 rounded-2xl p-4 items-center active:opacity-60"
-            style={{ minHeight: 44 }}
-            accessibilityLabel="Cancel emergency request"
-            accessibilityRole="button"
-          >
-            <Text className="text-gray-700 text-lg font-semibold">
-              Cancel
-            </Text>
-          </TouchableOpacity>
         </View>
       </View>
     </Modal>
   );
 }
+
+const styles = StyleSheet.create({
+  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' },
+  modal: { backgroundColor: 'white', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, paddingBottom: 40 },
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
+  title: { fontSize: 24, fontWeight: 'bold', color: COLORS.lava },
+  closeButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+  subtitle: { fontSize: 16, color: '#6B7280', marginBottom: 24 },
+  actions: { gap: 12 },
+  actionButton: { borderRadius: 16, padding: 20, alignItems: 'center', minHeight: 44 },
+  emergencyButton: { backgroundColor: COLORS.lava },
+  contactButton: { backgroundColor: COLORS.ocean },
+  locationButton: { backgroundColor: COLORS.success },
+  actionText: { color: 'white', fontSize: 18, fontWeight: 'bold', marginTop: 12 },
+  actionSubtext: { color: 'rgba(255,255,255,0.8)', fontSize: 14, marginTop: 4 },
+});

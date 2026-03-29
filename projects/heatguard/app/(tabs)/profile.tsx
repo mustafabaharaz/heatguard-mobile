@@ -1,8 +1,10 @@
 import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Switch, Alert } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
-import { Bell, BellOff, User, Settings, Shield } from 'lucide-react-native';
+import { Bell, User, Settings, Shield, ChevronRight } from 'lucide-react-native';
 import { useState, useEffect } from 'react';
+import { useRouter } from 'expo-router';
 import { registerForPushNotifications, scheduleDailyCheck, cancelAllNotifications } from '../../src/services/notifications/push';
+import { getContacts } from '../../src/features/emergency/storage/contactStorage';
 
 const COLORS = {
   ocean: '#1D3557',
@@ -11,12 +13,15 @@ const COLORS = {
 };
 
 export default function ProfileScreen() {
+  const router = useRouter();
   const [notificationsEnabled, setNotificationsEnabled] = useState(false);
   const [heatAlertsEnabled, setHeatAlertsEnabled] = useState(true);
   const [dailyCheckEnabled, setDailyCheckEnabled] = useState(true);
+  const [contactCount, setContactCount] = useState(0);
 
   useEffect(() => {
     checkNotificationPermission();
+    setContactCount(getContacts().length);
   }, []);
 
   const checkNotificationPermission = async () => {
@@ -46,7 +51,7 @@ export default function ProfileScreen() {
   const handleToggleDailyCheck = async (value: boolean) => {
     setDailyCheckEnabled(value);
     if (value) {
-      await scheduleDailyCheck(14); // 2 PM
+      await scheduleDailyCheck(14);
       Alert.alert('✓ Enabled', 'Daily check-in reminder set for 2 PM');
     } else {
       await cancelAllNotifications();
@@ -59,7 +64,6 @@ export default function ProfileScreen() {
       <StatusBar style="dark" />
 
       <ScrollView style={styles.scrollView} contentContainerStyle={styles.content}>
-        {/* Header */}
         <View style={styles.header}>
           <View style={styles.avatarContainer}>
             <User size={48} color="white" />
@@ -68,7 +72,6 @@ export default function ProfileScreen() {
           <Text style={styles.userRole}>Community Helper</Text>
         </View>
 
-        {/* Notifications Section */}
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Bell size={20} color={COLORS.ocean} />
@@ -125,25 +128,32 @@ export default function ProfileScreen() {
           )}
         </View>
 
-        {/* Safety Section */}
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Shield size={20} color={COLORS.ocean} />
             <Text style={styles.sectionTitle}>Safety Settings</Text>
           </View>
 
-          <TouchableOpacity style={styles.menuItem}>
+          <TouchableOpacity 
+            style={styles.menuItem}
+            onPress={() => router.push('/emergency/contacts')}
+          >
             <Text style={styles.menuItemText}>Emergency Contacts</Text>
-            <Text style={styles.menuItemValue}>2 contacts</Text>
+            <View style={styles.menuItemRight}>
+              <Text style={styles.menuItemValue}>{contactCount} {contactCount === 1 ? 'contact' : 'contacts'}</Text>
+              <ChevronRight size={20} color="#9CA3AF" />
+            </View>
           </TouchableOpacity>
 
           <TouchableOpacity style={styles.menuItem}>
             <Text style={styles.menuItemText}>Heat Thresholds</Text>
-            <Text style={styles.menuItemValue}>Custom</Text>
+            <View style={styles.menuItemRight}>
+              <Text style={styles.menuItemValue}>Custom</Text>
+              <ChevronRight size={20} color="#9CA3AF" />
+            </View>
           </TouchableOpacity>
         </View>
 
-        {/* App Info */}
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Settings size={20} color={COLORS.ocean} />
@@ -161,7 +171,6 @@ export default function ProfileScreen() {
           </View>
         </View>
 
-        {/* About */}
         <View style={styles.aboutContainer}>
           <Text style={styles.aboutTitle}>🛡️ HeatGuard</Text>
           <Text style={styles.aboutText}>
@@ -191,6 +200,7 @@ const styles = StyleSheet.create({
   settingDescription: { fontSize: 14, color: '#6B7280', lineHeight: 20 },
   menuItem: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 16, borderTopWidth: 1, borderTopColor: '#F3F4F6' },
   menuItemText: { fontSize: 16, color: COLORS.ocean },
+  menuItemRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   menuItemValue: { fontSize: 14, color: '#6B7280' },
   infoRow: { flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 12, borderTopWidth: 1, borderTopColor: '#F3F4F6' },
   infoLabel: { fontSize: 14, color: '#6B7280' },
