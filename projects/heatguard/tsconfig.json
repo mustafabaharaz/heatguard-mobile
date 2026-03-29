@@ -1,7 +1,7 @@
 {
-  "extends": "expo/tsconfig.base",
   "compilerOptions": {
     "strict": true,
+    "jsx": "react-native",
     "baseUrl": ".",
     "paths": {
       "@/*": ["src/*"],
@@ -10,5 +10,6 @@
       "@/services/*": ["src/services/*"],
       "@/lib/*": ["src/lib/*"]
     }
-  }
+  },
+  "extends": "expo/tsconfig.base"
 }
