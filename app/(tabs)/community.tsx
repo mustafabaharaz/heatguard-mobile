@@ -1,9 +1,11 @@
-import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Alert } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Alert, TextInput, Modal } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
-import { Users, Phone, MapPin, Clock, CheckCircle, AlertCircle, AlertTriangle } from 'lucide-react-native';
-import { useState } from 'react';
-import { Resident, CheckInStatus } from '../../src/features/community/types/community.types';
+import { Users, Phone, MapPin, Clock, CheckCircle, AlertCircle, AlertTriangle, History, X } from 'lucide-react-native';
+import { useState, useEffect } from 'react';
+import { Resident, CheckInStatus, CheckInRecord } from '../../src/features/community/types/community.types';
 import { MOCK_RESIDENTS } from '../../src/features/community/api/mockResidents';
+import { addCheckInRecord, getLastCheckIn } from '../../src/features/community/storage/checkInStorage';
+import CheckInHistoryModal from '../../src/features/community/components/CheckInHistoryModal';
 
 const COLORS = {
   glacier: '#8ECAE6',
@@ -18,32 +20,53 @@ const COLORS = {
 export default function CommunityScreen() {
   const [residents, setResidents] = useState<Resident[]>(MOCK_RESIDENTS);
   const [filter, setFilter] = useState<'all' | CheckInStatus>('all');
+  const [showHistoryModal, setShowHistoryModal] = useState(false);
+  const [selectedResident, setSelectedResident] = useState<Resident | null>(null);
+  const [showNotesModal, setShowNotesModal] = useState(false);
+  const [checkInNotes, setCheckInNotes] = useState('');
+  const [pendingCheckInResident, setPendingCheckInResident] = useState<string | null>(null);
 
   const filteredResidents = filter === 'all' 
     ? residents 
     : residents.filter(r => r.status === filter);
 
   const handleCheckIn = (residentId: string) => {
-    Alert.alert(
-      'Check-in Resident?',
-      'Mark this resident as safe and checked?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Mark Safe',
-          onPress: () => {
-            setResidents(prev =>
-              prev.map(r =>
-                r.id === residentId
-                  ? { ...r, status: 'safe', lastCheckIn: new Date() }
-                  : r
-              )
-            );
-            Alert.alert('Success', 'Resident marked as safe ✓');
-          },
-        },
-      ]
+    setPendingCheckInResident(residentId);
+    setCheckInNotes('');
+    setShowNotesModal(true);
+  };
+
+  const confirmCheckIn = () => {
+    if (!pendingCheckInResident) return;
+
+    const resident = residents.find(r => r.id === pendingCheckInResident);
+    if (!resident) return;
+
+    // Create check-in record
+    const record: CheckInRecord = {
+      id: Date.now().toString(),
+      residentId: pendingCheckInResident,
+      timestamp: new Date(),
+      status: 'safe',
+      volunteerId: 'Volunteer', // In real app, get from auth
+      notes: checkInNotes || undefined,
+    };
+
+    // Save to storage
+    addCheckInRecord(record);
+
+    // Update resident status
+    setResidents(prev =>
+      prev.map(r =>
+        r.id === pendingCheckInResident
+          ? { ...r, status: 'safe', lastCheckIn: new Date() }
+          : r
+      )
     );
+
+    setShowNotesModal(false);
+    setPendingCheckInResident(null);
+    Alert.alert('✓ Checked In', `${resident.name} marked as safe`);
   };
 
   const handleCall = (resident: Resident) => {
@@ -67,6 +90,18 @@ export default function CommunityScreen() {
           text: 'Report',
           style: 'destructive',
           onPress: () => {
+            // Create emergency record
+            const record: CheckInRecord = {
+              id: Date.now().toString(),
+              residentId: resident.id,
+              timestamp: new Date(),
+              status: 'emergency',
+              volunteerId: 'Volunteer',
+              notes: 'Emergency reported - 911 contacted',
+            };
+
+            addCheckInRecord(record);
+
             setResidents(prev =>
               prev.map(r =>
                 r.id === resident.id ? { ...r, status: 'emergency' } : r
@@ -77,6 +112,11 @@ export default function CommunityScreen() {
         },
       ]
     );
+  };
+
+  const handleViewHistory = (resident: Resident) => {
+    setSelectedResident(resident);
+    setShowHistoryModal(true);
   };
 
   const getStatusIcon = (status: CheckInStatus) => {
@@ -112,15 +152,16 @@ export default function CommunityScreen() {
     }
   };
 
-  const getLastCheckInText = (lastCheckIn: Date | null) => {
-    if (!lastCheckIn) return 'Never checked';
+  const getLastCheckInText = (residentId: string, lastCheckIn: Date | null) => {
+    const lastRecord = getLastCheckIn(residentId);
     
-    const hours = Math.floor((Date.now() - lastCheckIn.getTime()) / (1000 * 60 * 60));
-    const minutes = Math.floor((Date.now() - lastCheckIn.getTime()) / (1000 * 60));
+    if (!lastRecord) return 'Never checked';
     
-    if (hours > 0) return `${hours}h ago`;
-    if (minutes > 0) return `${minutes}m ago`;
-    return 'Just now';
+    const hours = Math.floor((Date.now() - lastRecord.timestamp.getTime()) / (1000 * 60 * 60));
+    const minutes = Math.floor((Date.now() - lastRecord.timestamp.getTime()) / (1000 * 60));
+    
+    const timeText = hours > 0 ? `${hours}h ago` : minutes > 0 ? `${minutes}m ago` : 'Just now';
+    return `${timeText} by ${lastRecord.volunteerId}`;
   };
 
   const stats = {
@@ -134,13 +175,11 @@ export default function CommunityScreen() {
     <View style={styles.container}>
       <StatusBar style="dark" />
 
-      {/* Header */}
       <View style={styles.header}>
         <Text style={styles.title}>Community Check-ins</Text>
         <Text style={styles.subtitle}>Vulnerable Residents Monitoring</Text>
       </View>
 
-      {/* Stats */}
       <View style={styles.statsContainer}>
         <View style={[styles.statCard, { borderLeftColor: COLORS.ocean }]}>
           <Text style={styles.statNumber}>{stats.total}</Text>
@@ -160,39 +199,30 @@ export default function CommunityScreen() {
         </View>
       </View>
 
-      {/* Filter Tabs */}
       <View style={styles.filterContainer}>
         <TouchableOpacity
           style={[styles.filterTab, filter === 'all' && styles.filterTabActive]}
           onPress={() => setFilter('all')}
         >
-          <Text style={[styles.filterText, filter === 'all' && styles.filterTextActive]}>
-            All
-          </Text>
+          <Text style={[styles.filterText, filter === 'all' && styles.filterTextActive]}>All</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.filterTab, filter === 'needs_check' && styles.filterTabActive]}
           onPress={() => setFilter('needs_check')}
         >
-          <Text style={[styles.filterText, filter === 'needs_check' && styles.filterTextActive]}>
-            Needs Check
-          </Text>
+          <Text style={[styles.filterText, filter === 'needs_check' && styles.filterTextActive]}>Needs Check</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.filterTab, filter === 'emergency' && styles.filterTabActive]}
           onPress={() => setFilter('emergency')}
         >
-          <Text style={[styles.filterText, filter === 'emergency' && styles.filterTextActive]}>
-            Emergency
-          </Text>
+          <Text style={[styles.filterText, filter === 'emergency' && styles.filterTextActive]}>Emergency</Text>
         </TouchableOpacity>
       </View>
 
-      {/* Residents List */}
       <ScrollView style={styles.scrollView} contentContainerStyle={styles.listContent}>
         {filteredResidents.map(resident => (
           <View key={resident.id} style={styles.residentCard}>
-            {/* Header */}
             <View style={styles.residentHeader}>
               <View style={styles.residentInfo}>
                 <Text style={styles.residentName}>{resident.name}</Text>
@@ -206,7 +236,6 @@ export default function CommunityScreen() {
               </View>
             </View>
 
-            {/* Details */}
             <View style={styles.residentDetails}>
               <View style={styles.detailRow}>
                 <MapPin size={16} color="#6B7280" />
@@ -214,7 +243,7 @@ export default function CommunityScreen() {
               </View>
               <View style={styles.detailRow}>
                 <Clock size={16} color="#6B7280" />
-                <Text style={styles.detailText}>Last check: {getLastCheckInText(resident.lastCheckIn)}</Text>
+                <Text style={styles.detailText}>Last: {getLastCheckInText(resident.id, resident.lastCheckIn)}</Text>
               </View>
               {resident.notes && (
                 <View style={styles.notesContainer}>
@@ -223,7 +252,6 @@ export default function CommunityScreen() {
               )}
             </View>
 
-            {/* Actions */}
             <View style={styles.actions}>
               <TouchableOpacity
                 style={[styles.actionButton, styles.callButton]}
@@ -243,19 +271,77 @@ export default function CommunityScreen() {
                 </TouchableOpacity>
               )}
 
+              <TouchableOpacity
+                style={[styles.actionButton, styles.historyButton]}
+                onPress={() => handleViewHistory(resident)}
+              >
+                <History size={18} color={COLORS.ocean} />
+              </TouchableOpacity>
+
               {resident.status !== 'emergency' && (
                 <TouchableOpacity
                   style={[styles.actionButton, styles.emergencyButton]}
                   onPress={() => handleEmergency(resident)}
                 >
                   <AlertCircle size={18} color="white" />
-                  <Text style={styles.actionButtonText}>SOS</Text>
                 </TouchableOpacity>
               )}
             </View>
           </View>
         ))}
       </ScrollView>
+
+      {/* Notes Modal */}
+      <Modal
+        visible={showNotesModal}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setShowNotesModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.notesModal}>
+            <View style={styles.notesHeader}>
+              <Text style={styles.notesTitle}>Add Check-in Notes</Text>
+              <TouchableOpacity onPress={() => setShowNotesModal(false)}>
+                <X size={24} color={COLORS.ocean} />
+              </TouchableOpacity>
+            </View>
+            
+            <TextInput
+              style={styles.notesInput}
+              placeholder="Optional notes about this check-in..."
+              value={checkInNotes}
+              onChangeText={setCheckInNotes}
+              multiline
+              numberOfLines={4}
+            />
+
+            <View style={styles.notesActions}>
+              <TouchableOpacity
+                style={[styles.notesButton, styles.skipButton]}
+                onPress={confirmCheckIn}
+              >
+                <Text style={styles.skipButtonText}>Skip Notes</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.notesButton, styles.saveButton]}
+                onPress={confirmCheckIn}
+              >
+                <Text style={styles.saveButtonText}>Save & Check In</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {selectedResident && (
+        <CheckInHistoryModal
+          visible={showHistoryModal}
+          onClose={() => setShowHistoryModal(false)}
+          residentId={selectedResident.id}
+          residentName={selectedResident.name}
+        />
+      )}
     </View>
   );
 }
@@ -292,6 +378,18 @@ const styles = StyleSheet.create({
   actionButton: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 12, borderRadius: 10, gap: 6, minHeight: 44 },
   callButton: { backgroundColor: COLORS.ocean },
   checkInButton: { backgroundColor: COLORS.success },
-  emergencyButton: { backgroundColor: COLORS.lava },
+  historyButton: { backgroundColor: 'white', borderWidth: 1, borderColor: COLORS.ocean, width: 44, paddingHorizontal: 0 },
+  emergencyButton: { backgroundColor: COLORS.lava, width: 44, paddingHorizontal: 0 },
   actionButtonText: { color: 'white', fontSize: 14, fontWeight: '600' },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  notesModal: { backgroundColor: 'white', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, paddingBottom: 40 },
+  notesHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
+  notesTitle: { fontSize: 20, fontWeight: 'bold', color: COLORS.ocean },
+  notesInput: { backgroundColor: '#F9FAFB', borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 12, padding: 16, fontSize: 16, color: COLORS.ocean, minHeight: 100, textAlignVertical: 'top' },
+  notesActions: { flexDirection: 'row', gap: 12, marginTop: 20 },
+  notesButton: { flex: 1, paddingVertical: 16, borderRadius: 12, alignItems: 'center', minHeight: 44 },
+  skipButton: { backgroundColor: '#F3F4F6' },
+  skipButtonText: { color: COLORS.ocean, fontSize: 16, fontWeight: '600' },
+  saveButton: { backgroundColor: COLORS.success },
+  saveButtonText: { color: 'white', fontSize: 16, fontWeight: 'bold' },
 });
