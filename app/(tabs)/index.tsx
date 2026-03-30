@@ -1,6 +1,6 @@
 import { View, Text, TouchableOpacity, ScrollView, RefreshControl, Alert, Linking, StyleSheet, ActivityIndicator } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
-import { AlertCircle, Thermometer, RefreshCw, MapPin, User, TrendingUp, ShieldAlert, Brain, ChevronRight, Zap } from 'lucide-react-native';
+import { AlertCircle, Thermometer, RefreshCw, MapPin, User, TrendingUp, ShieldAlert, Brain, ChevronRight, Zap, BarChart2 } from 'lucide-react-native';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter, useFocusEffect } from 'expo-router';
 import EmergencySOSModal from '../../src/components/emergency/EmergencySOSModal';
@@ -216,6 +216,20 @@ function IntelligenceHubCard({ temperature }: { temperature: number }) {
           <ChevronRight size={13} color="rgba(255,255,255,0.5)" />
         </TouchableOpacity>
       </View>
+
+      {/* Exposure history — full-width second row */}
+      <TouchableOpacity
+        style={[styles.hubButton, styles.hubButtonExposure]}
+        onPress={() => router.push('/intelligence/exposure-history')}
+        activeOpacity={0.8}
+        accessibilityRole="button"
+        accessibilityLabel="Open personal exposure history"
+      >
+        <BarChart2 size={14} color="#FFFFFF" />
+        <Text style={styles.hubButtonText}>Exposure History</Text>
+        <Text style={styles.hubButtonMeta}>14-day analytics</Text>
+        <ChevronRight size={13} color="rgba(255,255,255,0.5)" />
+      </TouchableOpacity>
     </View>
   );
 }
@@ -537,6 +551,7 @@ const styles = StyleSheet.create({
   hubButtonRow: {
     flexDirection: 'row',
     gap: 10,
+    marginBottom: 10,
   },
   hubButton: {
     flex: 1,
@@ -552,11 +567,20 @@ const styles = StyleSheet.create({
   hubButtonAlt: {
     backgroundColor: 'rgba(59,130,246,0.25)',
   },
+  hubButtonExposure: {
+    flex: 0,
+    backgroundColor: 'rgba(255,255,255,0.07)',
+    marginTop: 0,
+  },
   hubButtonText: {
     color: '#FFFFFF',
     fontSize: 13,
     fontWeight: '600',
     flex: 1,
+  },
+  hubButtonMeta: {
+    color: 'rgba(255,255,255,0.4)',
+    fontSize: 11,
   },
 
   // SOS
