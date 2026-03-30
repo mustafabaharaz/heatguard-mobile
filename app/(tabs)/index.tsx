@@ -1,6 +1,6 @@
 import { View, Text, TouchableOpacity, ScrollView, RefreshControl, Alert, Linking, StyleSheet, ActivityIndicator } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
-import { AlertCircle, Thermometer, RefreshCw, MapPin, User, TrendingUp, ShieldAlert } from 'lucide-react-native';
+import { AlertCircle, Thermometer, RefreshCw, MapPin, User, TrendingUp, ShieldAlert, Brain, ChevronRight, Zap } from 'lucide-react-native';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter, useFocusEffect } from 'expo-router';
 import EmergencySOSModal from '../../src/components/emergency/EmergencySOSModal';
@@ -71,7 +71,6 @@ function PredictiveWellnessCard({ temperature, profile }: { temperature: number;
   const label = getRiskLabel(level);
   const color = getRiskLevelColor(level);
 
-  // Factors contributing to elevated risk
   const riskFactors: string[] = [];
   if (profile.isElderly) riskFactors.push('Age 65+');
   if (profile.hasDiabetes) riskFactors.push('Diabetes');
@@ -113,7 +112,6 @@ function PredictiveWellnessCard({ temperature, profile }: { temperature: number;
         </View>
       </View>
 
-      {/* Profile summary row */}
       <View style={styles.wellnessProfileRow}>
         <View style={styles.wellnessAvatar}>
           <User size={16} color="white" />
@@ -126,10 +124,8 @@ function PredictiveWellnessCard({ temperature, profile }: { temperature: number;
         )}
       </View>
 
-      {/* Advice */}
       <Text style={styles.wellnessAdvice}>{advice}</Text>
 
-      {/* Risk factors */}
       {riskFactors.length > 0 && (
         <View style={styles.factorsRow}>
           {riskFactors.map(f => (
@@ -140,13 +136,85 @@ function PredictiveWellnessCard({ temperature, profile }: { temperature: number;
         </View>
       )}
 
-      {/* Alert threshold indicator */}
       <View style={styles.thresholdRow}>
         <Thermometer size={14} color={COLORS.ocean} />
         <Text style={styles.thresholdText}>
           Your alert threshold: {profile.alertThreshold}°C
           {temperature >= profile.alertThreshold ? ' — ⚠️ Exceeded!' : ` — ${profile.alertThreshold - temperature}°C remaining`}
         </Text>
+      </View>
+    </View>
+  );
+}
+
+// ─── Intelligence Hub Card ────────────────────────────────────────────────────
+
+function IntelligenceHubCard({ temperature }: { temperature: number }) {
+  const router = useRouter();
+
+  const tomorrowLevel = temperature >= 40 ? 'Crisis' : temperature >= 35 ? 'Extreme' : temperature >= 30 ? 'High Alert' : 'Caution';
+  const tomorrowColor = temperature >= 40 ? '#7C2D12' : temperature >= 35 ? '#DC2626' : temperature >= 30 ? '#EA580C' : '#D97706';
+  const safeWindow = temperature >= 38 ? '6 – 9 AM' : temperature >= 32 ? '6 – 10 AM' : 'All morning';
+
+  return (
+    <View style={styles.hubCard}>
+      {/* Header */}
+      <View style={styles.hubHeader}>
+        <View style={styles.hubIconWrap}>
+          <Brain size={18} color="#FFFFFF" />
+        </View>
+        <Text style={styles.hubTitle}>Intelligence</Text>
+        <View style={styles.hubBadge}>
+          <Text style={styles.hubBadgeText}>Personalised</Text>
+        </View>
+      </View>
+
+      {/* 3-metric summary row */}
+      <View style={styles.hubMetrics}>
+        <View style={styles.hubMetric}>
+          <Text style={styles.hubMetricLabel}>Tomorrow's Peak</Text>
+          <View style={[styles.hubLevelPill, { backgroundColor: tomorrowColor + '22', borderColor: tomorrowColor + '55' }]}>
+            <View style={[styles.hubLevelDot, { backgroundColor: tomorrowColor }]} />
+            <Text style={[styles.hubLevelText, { color: tomorrowColor }]}>{tomorrowLevel}</Text>
+          </View>
+        </View>
+        <View style={styles.hubDivider} />
+        <View style={styles.hubMetric}>
+          <Text style={styles.hubMetricLabel}>Best Window</Text>
+          <Text style={styles.hubMetricValue}>{safeWindow}</Text>
+        </View>
+        <View style={styles.hubDivider} />
+        <View style={styles.hubMetric}>
+          <Text style={styles.hubMetricLabel}>Personalised</Text>
+          <Text style={[styles.hubMetricValue, { color: '#2D9B6F' }]}>Active</Text>
+        </View>
+      </View>
+
+      {/* Two deep-link buttons */}
+      <View style={styles.hubButtonRow}>
+        <TouchableOpacity
+          style={styles.hubButton}
+          onPress={() => router.push('/intelligence/forecast')}
+          activeOpacity={0.8}
+          accessibilityRole="button"
+          accessibilityLabel="Open 5-day heat forecast"
+        >
+          <Brain size={14} color="#FFFFFF" />
+          <Text style={styles.hubButtonText}>5-Day Forecast</Text>
+          <ChevronRight size={13} color="rgba(255,255,255,0.5)" />
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.hubButton, styles.hubButtonAlt]}
+          onPress={() => router.push('/intelligence/activity-planner')}
+          activeOpacity={0.8}
+          accessibilityRole="button"
+          accessibilityLabel="Open activity safety planner"
+        >
+          <Zap size={14} color="#FFFFFF" />
+          <Text style={styles.hubButtonText}>Activity Planner</Text>
+          <ChevronRight size={13} color="rgba(255,255,255,0.5)" />
+        </TouchableOpacity>
       </View>
     </View>
   );
@@ -164,7 +232,6 @@ export default function HomeScreen() {
 
   const { location, error: locationError } = useLocation();
 
-  // Reload profile when returning from profile screen
   useFocusEffect(useCallback(() => {
     setHeatProfile(getHeatProfile());
   }, []));
@@ -288,8 +355,11 @@ export default function HomeScreen() {
           <Text style={styles.alertText}>{getAdviceText()}</Text>
         </View>
 
-        {/* ✦ Predictive Wellness Dashboard */}
+        {/* Predictive Wellness Dashboard */}
         <PredictiveWellnessCard temperature={temperature} profile={heatProfile} />
+
+        {/* ✦ Intelligence Hub */}
+        <IntelligenceHubCard temperature={temperature} />
 
         {/* Emergency SOS */}
         <TouchableOpacity
@@ -372,6 +442,122 @@ const styles = StyleSheet.create({
   wellnessSetupSub: { fontSize: 13, color: '#6B7280', lineHeight: 20 },
   wellnessSetupBtn: { alignSelf: 'flex-start', backgroundColor: '#EFF6FF', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 10 },
   wellnessSetupBtnText: { fontSize: 14, fontWeight: '600', color: COLORS.ocean },
+
+  // Intelligence Hub card
+  hubCard: {
+    backgroundColor: COLORS.ocean,
+    borderRadius: 16,
+    padding: 18,
+    marginBottom: 16,
+    shadowColor: COLORS.ocean,
+    shadowOpacity: 0.25,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 4,
+  },
+  hubHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 16,
+  },
+  hubIconWrap: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  hubTitle: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  hubBadge: {
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    borderRadius: 10,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  hubBadgeText: {
+    color: 'rgba(255,255,255,0.85)',
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  hubMetrics: {
+    flexDirection: 'row',
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 12,
+  },
+  hubMetric: {
+    flex: 1,
+    alignItems: 'center',
+    gap: 6,
+  },
+  hubDivider: {
+    width: 1,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    marginVertical: 2,
+  },
+  hubMetricLabel: {
+    color: 'rgba(255,255,255,0.55)',
+    fontSize: 10,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+    textAlign: 'center',
+  },
+  hubMetricValue: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  hubLevelPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    borderRadius: 10,
+    borderWidth: 1,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  hubLevelDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  hubLevelText: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  hubButtonRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  hubButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    gap: 6,
+  },
+  hubButtonAlt: {
+    backgroundColor: 'rgba(59,130,246,0.25)',
+  },
+  hubButtonText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '600',
+    flex: 1,
+  },
 
   // SOS
   sosButton: { backgroundColor: COLORS.lava, borderRadius: 16, padding: 24, alignItems: 'center', minHeight: 44, marginBottom: 0 },

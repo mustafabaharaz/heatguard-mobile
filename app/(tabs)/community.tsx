@@ -1,395 +1,965 @@
-import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Alert, TextInput, Modal } from 'react-native';
-import { StatusBar } from 'expo-status-bar';
-import { Users, Phone, MapPin, Clock, CheckCircle, AlertCircle, AlertTriangle, History, X } from 'lucide-react-native';
-import { useState, useEffect } from 'react';
-import { Resident, CheckInStatus, CheckInRecord } from '../../src/features/community/types/community.types';
-import { MOCK_RESIDENTS } from '../../src/features/community/api/mockResidents';
-import { addCheckInRecord, getLastCheckIn } from '../../src/features/community/storage/checkInStorage';
-import CheckInHistoryModal from '../../src/features/community/components/CheckInHistoryModal';
+// app/(tabs)/community.tsx
+// Community Hub — Phase 2: Community Network
+// Sections: Activity Feed · Volunteer Check-ins
+// Quick Links: Neighbor Network · Resource Board
 
-const COLORS = {
-  glacier: '#8ECAE6',
-  desert: '#F4A261',
-  ember: '#E76F51',
-  lava: '#E63946',
-  ocean: '#1D3557',
-  success: '#10B981',
-  warning: '#F59E0B',
+import React, {
+  useState,
+  useCallback,
+  useMemo,
+  useRef,
+} from 'react';
+import {
+  View,
+  Text,
+  ScrollView,
+  StyleSheet,
+  Pressable,
+  TextInput,
+  Modal,
+  SafeAreaView,
+  Platform,
+  Animated,
+  Alert,
+} from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { router } from 'expo-router';
+import {
+  loadPosts,
+  addPost,
+  reactToPost,
+  resolvePost,
+  getPostsByType,
+  type CommunityPost,
+  type PostType,
+  type ThermalLevel,
+} from '../../src/features/community/storage/communityStorage';
+import { getNeighborStats, loadNeighbors } from '../../src/features/community/storage/neighborStorage';
+import { loadResources } from '../../src/features/community/storage/resourceStorage';
+
+// ─── Theme ────────────────────────────────────────────────────────────────────
+
+const C = {
+  bg:           '#0A1628',
+  surface:      '#1A2540',
+  card:         '#1E2D4A',
+  border:       '#2A3F5F',
+  textPrimary:  '#F8FAFC',
+  textSecondary:'#94A3B8',
+  textMuted:    '#64748B',
+  accent:       '#3B82F6',
+  danger:       '#EF4444',
+  success:      '#10B981',
+  warning:      '#F59E0B',
+  purple:       '#8B5CF6',
+
+  thermal: {
+    1: '#10B981',
+    2: '#F59E0B',
+    3: '#F97316',
+    4: '#EF4444',
+    5: '#7C3AED',
+  } as Record<ThermalLevel, string>,
+
+  thermalBg: {
+    1: '#052E20',
+    2: '#1C1400',
+    3: '#1C0A00',
+    4: '#1C0000',
+    5: '#1A0A2E',
+  } as Record<ThermalLevel, string>,
 };
 
-export default function CommunityScreen() {
-  const [residents, setResidents] = useState<Resident[]>(MOCK_RESIDENTS);
-  const [filter, setFilter] = useState<'all' | CheckInStatus>('all');
-  const [showHistoryModal, setShowHistoryModal] = useState(false);
-  const [selectedResident, setSelectedResident] = useState<Resident | null>(null);
-  const [showNotesModal, setShowNotesModal] = useState(false);
-  const [checkInNotes, setCheckInNotes] = useState('');
-  const [pendingCheckInResident, setPendingCheckInResident] = useState<string | null>(null);
+// ─── Volunteer Check-in Data (compatible with existing storage) ───────────────
 
-  const filteredResidents = filter === 'all' 
-    ? residents 
-    : residents.filter(r => r.status === filter);
+interface VolunteerRequest {
+  id: string;
+  resident: string;
+  address: string;
+  age: number;
+  urgency: 'low' | 'medium' | 'high' | 'critical';
+  status: 'open' | 'assigned' | 'completed';
+  notes: string;
+  requestedAt: number;
+}
 
-  const handleCheckIn = (residentId: string) => {
-    setPendingCheckInResident(residentId);
-    setCheckInNotes('');
-    setShowNotesModal(true);
-  };
+const SAMPLE_REQUESTS: VolunteerRequest[] = [
+  { id: 'v1', resident: 'Florence Nakamura', address: '302 E Lemon St, Apt 4A', age: 84, urgency: 'critical', status: 'open',      notes: 'AC unit failed this morning. No family nearby.',           requestedAt: Date.now() - 40 * 60000  },
+  { id: 'v2', resident: 'Harold Simmons',    address: '78 N Scottsdale Rd',       age: 77, urgency: 'high',     status: 'open',      notes: 'Diabetic. Missed medication delivery yesterday.',          requestedAt: Date.now() - 2 * 3600000 },
+  { id: 'v3', resident: 'Agnes Kowalski',    address: '1450 W Broadway Rd',       age: 91, urgency: 'medium',   status: 'assigned',  notes: 'Wellness check, does well but lives alone.',              requestedAt: Date.now() - 5 * 3600000 },
+  { id: 'v4', resident: 'Thomas Osei',       address: '520 S Dobson Rd',          age: 73, urgency: 'low',      status: 'completed', notes: 'Completed. Comfortable, AC on, stocked with water.',       requestedAt: Date.now() - 8 * 3600000 },
+  { id: 'v5', resident: 'Martha Delgado',    address: '900 E University Dr',      age: 80, urgency: 'high',     status: 'open',      notes: 'Window AC only, temp inside estimated 88°F.',             requestedAt: Date.now() - 1 * 3600000 },
+];
 
-  const confirmCheckIn = () => {
-    if (!pendingCheckInResident) return;
+const URGENCY_META = {
+  critical: { color: '#7C3AED', bg: '#1A0A2E', label: 'Critical' },
+  high:     { color: '#EF4444', bg: '#1C0000', label: 'High'     },
+  medium:   { color: '#F97316', bg: '#1C0A00', label: 'Medium'   },
+  low:      { color: '#10B981', bg: '#052E20', label: 'Low'      },
+} as const;
 
-    const resident = residents.find(r => r.id === pendingCheckInResident);
-    if (!resident) return;
+// ─── Post Type Meta ───────────────────────────────────────────────────────────
 
-    // Create check-in record
-    const record: CheckInRecord = {
-      id: Date.now().toString(),
-      residentId: pendingCheckInResident,
-      timestamp: new Date(),
-      status: 'safe',
-      volunteerId: 'Volunteer', // In real app, get from auth
-      notes: checkInNotes || undefined,
-    };
+const POST_META: Record<PostType, { label: string; color: string; icon: string }> = {
+  alert:     { label: 'Alert',     color: '#EF4444', icon: 'warning'          },
+  resource:  { label: 'Resource',  color: '#3B82F6', icon: 'cube-outline'     },
+  wellness:  { label: 'Wellness',  color: '#10B981', icon: 'heart-outline'    },
+  volunteer: { label: 'Volunteer', color: '#F59E0B', icon: 'people-outline'   },
+};
 
-    // Save to storage
-    addCheckInRecord(record);
+const FEED_FILTERS: { key: PostType | 'all'; label: string }[] = [
+  { key: 'all',      label: 'All'      },
+  { key: 'alert',    label: 'Alerts'   },
+  { key: 'wellness', label: 'Wellness' },
+  { key: 'resource', label: 'Resources'},
+  { key: 'volunteer',label: 'Volunteer'},
+];
 
-    // Update resident status
-    setResidents(prev =>
-      prev.map(r =>
-        r.id === pendingCheckInResident
-          ? { ...r, status: 'safe', lastCheckIn: new Date() }
-          : r
-      )
-    );
+const VOLUNTEER_FILTERS = ['All', 'Open', 'Assigned', 'Completed'] as const;
+type VolunteerFilter = (typeof VOLUNTEER_FILTERS)[number];
 
-    setShowNotesModal(false);
-    setPendingCheckInResident(null);
-    Alert.alert('✓ Checked In', `${resident.name} marked as safe`);
-  };
+// ─── Compose Modal ────────────────────────────────────────────────────────────
 
-  const handleCall = (resident: Resident) => {
-    Alert.alert(
-      `Call ${resident.name}?`,
-      resident.phoneNumber,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Call', onPress: () => console.log('Calling...') },
-      ]
-    );
-  };
+interface ComposeModalProps {
+  visible: boolean;
+  onClose: () => void;
+  onSubmit: (data: Omit<CommunityPost, 'id' | 'timestamp' | 'reactions' | 'resolved'>) => void;
+}
 
-  const handleEmergency = (resident: Resident) => {
-    Alert.alert(
-      '🆘 Report Emergency',
-      `Report emergency for ${resident.name}?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Report',
-          style: 'destructive',
-          onPress: () => {
-            // Create emergency record
-            const record: CheckInRecord = {
-              id: Date.now().toString(),
-              residentId: resident.id,
-              timestamp: new Date(),
-              status: 'emergency',
-              volunteerId: 'Volunteer',
-              notes: 'Emergency reported - 911 contacted',
-            };
+function ComposeModal({ visible, onClose, onSubmit }: ComposeModalProps) {
+  const [type, setType] = useState<PostType>('alert');
+  const [title, setTitle] = useState('');
+  const [body, setBody] = useState('');
+  const [neighborhood, setNeighborhood] = useState('');
+  const [location, setLocation] = useState('');
+  const [thermalLevel, setThermalLevel] = useState<ThermalLevel>(3);
 
-            addCheckInRecord(record);
-
-            setResidents(prev =>
-              prev.map(r =>
-                r.id === resident.id ? { ...r, status: 'emergency' } : r
-              )
-            );
-            Alert.alert('Emergency Reported', '911 and emergency contacts notified');
-          },
-        },
-      ]
-    );
-  };
-
-  const handleViewHistory = (resident: Resident) => {
-    setSelectedResident(resident);
-    setShowHistoryModal(true);
-  };
-
-  const getStatusIcon = (status: CheckInStatus) => {
-    switch (status) {
-      case 'safe':
-        return <CheckCircle size={24} color={COLORS.success} />;
-      case 'needs_check':
-        return <AlertTriangle size={24} color={COLORS.warning} />;
-      case 'emergency':
-        return <AlertCircle size={24} color={COLORS.lava} />;
+  const handleSubmit = () => {
+    if (!title.trim() || !body.trim()) {
+      Alert.alert('Required', 'Please add a title and message.');
+      return;
     }
-  };
-
-  const getStatusColor = (status: CheckInStatus) => {
-    switch (status) {
-      case 'safe':
-        return COLORS.success;
-      case 'needs_check':
-        return COLORS.warning;
-      case 'emergency':
-        return COLORS.lava;
-    }
-  };
-
-  const getStatusText = (status: CheckInStatus) => {
-    switch (status) {
-      case 'safe':
-        return 'Checked In';
-      case 'needs_check':
-        return 'Needs Check';
-      case 'emergency':
-        return 'EMERGENCY';
-    }
-  };
-
-  const getLastCheckInText = (residentId: string, lastCheckIn: Date | null) => {
-    const lastRecord = getLastCheckIn(residentId);
-    
-    if (!lastRecord) return 'Never checked';
-    
-    const hours = Math.floor((Date.now() - lastRecord.timestamp.getTime()) / (1000 * 60 * 60));
-    const minutes = Math.floor((Date.now() - lastRecord.timestamp.getTime()) / (1000 * 60));
-    
-    const timeText = hours > 0 ? `${hours}h ago` : minutes > 0 ? `${minutes}m ago` : 'Just now';
-    return `${timeText} by ${lastRecord.volunteerId}`;
-  };
-
-  const stats = {
-    total: residents.length,
-    safe: residents.filter(r => r.status === 'safe').length,
-    needsCheck: residents.filter(r => r.status === 'needs_check').length,
-    emergency: residents.filter(r => r.status === 'emergency').length,
+    onSubmit({
+      type,
+      title: title.trim(),
+      body: body.trim(),
+      author: 'You',
+      neighborhood: neighborhood.trim() || 'My Neighborhood',
+      thermalLevel,
+      location: location.trim() || undefined,
+    });
+    setTitle(''); setBody(''); setNeighborhood(''); setLocation('');
+    setType('alert'); setThermalLevel(3);
   };
 
   return (
-    <View style={styles.container}>
-      <StatusBar style="dark" />
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <View style={cs.overlay}>
+        <ScrollView contentContainerStyle={cs.sheet} keyboardShouldPersistTaps="handled">
+          <View style={cs.handle} />
+          <Text style={cs.sheetTitle}>Post to Community</Text>
 
-      <View style={styles.header}>
-        <Text style={styles.title}>Community Check-ins</Text>
-        <Text style={styles.subtitle}>Vulnerable Residents Monitoring</Text>
-      </View>
-
-      <View style={styles.statsContainer}>
-        <View style={[styles.statCard, { borderLeftColor: COLORS.ocean }]}>
-          <Text style={styles.statNumber}>{stats.total}</Text>
-          <Text style={styles.statLabel}>Total</Text>
-        </View>
-        <View style={[styles.statCard, { borderLeftColor: COLORS.success }]}>
-          <Text style={styles.statNumber}>{stats.safe}</Text>
-          <Text style={styles.statLabel}>Safe</Text>
-        </View>
-        <View style={[styles.statCard, { borderLeftColor: COLORS.warning }]}>
-          <Text style={styles.statNumber}>{stats.needsCheck}</Text>
-          <Text style={styles.statLabel}>Need Check</Text>
-        </View>
-        <View style={[styles.statCard, { borderLeftColor: COLORS.lava }]}>
-          <Text style={styles.statNumber}>{stats.emergency}</Text>
-          <Text style={styles.statLabel}>Emergency</Text>
-        </View>
-      </View>
-
-      <View style={styles.filterContainer}>
-        <TouchableOpacity
-          style={[styles.filterTab, filter === 'all' && styles.filterTabActive]}
-          onPress={() => setFilter('all')}
-        >
-          <Text style={[styles.filterText, filter === 'all' && styles.filterTextActive]}>All</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.filterTab, filter === 'needs_check' && styles.filterTabActive]}
-          onPress={() => setFilter('needs_check')}
-        >
-          <Text style={[styles.filterText, filter === 'needs_check' && styles.filterTextActive]}>Needs Check</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.filterTab, filter === 'emergency' && styles.filterTabActive]}
-          onPress={() => setFilter('emergency')}
-        >
-          <Text style={[styles.filterText, filter === 'emergency' && styles.filterTextActive]}>Emergency</Text>
-        </TouchableOpacity>
-      </View>
-
-      <ScrollView style={styles.scrollView} contentContainerStyle={styles.listContent}>
-        {filteredResidents.map(resident => (
-          <View key={resident.id} style={styles.residentCard}>
-            <View style={styles.residentHeader}>
-              <View style={styles.residentInfo}>
-                <Text style={styles.residentName}>{resident.name}</Text>
-                <Text style={styles.residentAge}>{resident.age} years old</Text>
-              </View>
-              <View style={[styles.statusBadge, { backgroundColor: `${getStatusColor(resident.status)}15` }]}>
-                {getStatusIcon(resident.status)}
-                <Text style={[styles.statusText, { color: getStatusColor(resident.status) }]}>
-                  {getStatusText(resident.status)}
-                </Text>
-              </View>
-            </View>
-
-            <View style={styles.residentDetails}>
-              <View style={styles.detailRow}>
-                <MapPin size={16} color="#6B7280" />
-                <Text style={styles.detailText}>{resident.address}</Text>
-              </View>
-              <View style={styles.detailRow}>
-                <Clock size={16} color="#6B7280" />
-                <Text style={styles.detailText}>Last: {getLastCheckInText(resident.id, resident.lastCheckIn)}</Text>
-              </View>
-              {resident.notes && (
-                <View style={styles.notesContainer}>
-                  <Text style={styles.notesText}>📝 {resident.notes}</Text>
-                </View>
-              )}
-            </View>
-
-            <View style={styles.actions}>
-              <TouchableOpacity
-                style={[styles.actionButton, styles.callButton]}
-                onPress={() => handleCall(resident)}
+          {/* Type */}
+          <Text style={cs.sectionLabel}>Post Type</Text>
+          <View style={cs.typeGrid}>
+            {(Object.entries(POST_META) as [PostType, typeof POST_META[PostType]][]).map(([t, meta]) => (
+              <Pressable
+                key={t}
+                style={[cs.typeBtn, type === t && { borderColor: meta.color, backgroundColor: meta.color + '22' }]}
+                onPress={() => setType(t)}
+                accessibilityRole="radio"
+                accessibilityState={{ checked: type === t }}
               >
-                <Phone size={18} color="white" />
-                <Text style={styles.actionButtonText}>Call</Text>
-              </TouchableOpacity>
-
-              {resident.status !== 'safe' && (
-                <TouchableOpacity
-                  style={[styles.actionButton, styles.checkInButton]}
-                  onPress={() => handleCheckIn(resident.id)}
-                >
-                  <CheckCircle size={18} color="white" />
-                  <Text style={styles.actionButtonText}>Check In</Text>
-                </TouchableOpacity>
-              )}
-
-              <TouchableOpacity
-                style={[styles.actionButton, styles.historyButton]}
-                onPress={() => handleViewHistory(resident)}
-              >
-                <History size={18} color={COLORS.ocean} />
-              </TouchableOpacity>
-
-              {resident.status !== 'emergency' && (
-                <TouchableOpacity
-                  style={[styles.actionButton, styles.emergencyButton]}
-                  onPress={() => handleEmergency(resident)}
-                >
-                  <AlertCircle size={18} color="white" />
-                </TouchableOpacity>
-              )}
-            </View>
+                <Ionicons name={meta.icon as any} size={18} color={type === t ? meta.color : C.textMuted} />
+                <Text style={[cs.typeBtnText, type === t && { color: meta.color }]}>{meta.label}</Text>
+              </Pressable>
+            ))}
           </View>
-        ))}
-      </ScrollView>
 
-      {/* Notes Modal */}
-      <Modal
-        visible={showNotesModal}
-        animationType="slide"
-        transparent
-        onRequestClose={() => setShowNotesModal(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.notesModal}>
-            <View style={styles.notesHeader}>
-              <Text style={styles.notesTitle}>Add Check-in Notes</Text>
-              <TouchableOpacity onPress={() => setShowNotesModal(false)}>
-                <X size={24} color={COLORS.ocean} />
-              </TouchableOpacity>
+          {/* Thermal Level */}
+          <Text style={cs.sectionLabel}>Heat Severity</Text>
+          <View style={cs.thermalRow}>
+            {([1, 2, 3, 4, 5] as ThermalLevel[]).map((lvl) => (
+              <Pressable
+                key={lvl}
+                style={[
+                  cs.thermalBtn,
+                  { backgroundColor: C.thermalBg[lvl], borderColor: C.thermal[lvl] + (thermalLevel === lvl ? 'FF' : '44') },
+                  thermalLevel === lvl && cs.thermalBtnSelected,
+                ]}
+                onPress={() => setThermalLevel(lvl)}
+                accessibilityRole="radio"
+                accessibilityLabel={`Severity level ${lvl}`}
+                accessibilityState={{ checked: thermalLevel === lvl }}
+              >
+                <Text style={[cs.thermalBtnText, { color: C.thermal[lvl] }]}>{lvl}</Text>
+              </Pressable>
+            ))}
+          </View>
+
+          {/* Text Fields */}
+          {[
+            { label: 'Title *',        value: title,        setter: setTitle,        placeholder: 'Brief summary of what\'s happening' },
+            { label: 'Message *',      value: body,         setter: setBody,         placeholder: 'Details, location info, what people should know...', multiline: true },
+            { label: 'Neighborhood',   value: neighborhood, setter: setNeighborhood, placeholder: 'e.g. South Tempe, Chandler' },
+            { label: 'Specific Location', value: location,  setter: setLocation,     placeholder: 'Optional: address or landmark' },
+          ].map((f) => (
+            <View key={f.label} style={cs.fieldBlock}>
+              <Text style={cs.fieldLabel}>{f.label}</Text>
+              <TextInput
+                style={[cs.fieldInput, f.multiline && { height: 80, paddingTop: 10 }]}
+                value={f.value}
+                onChangeText={f.setter}
+                placeholder={f.placeholder}
+                placeholderTextColor={C.textMuted}
+                multiline={f.multiline}
+                accessibilityLabel={f.label}
+              />
             </View>
-            
-            <TextInput
-              style={styles.notesInput}
-              placeholder="Optional notes about this check-in..."
-              value={checkInNotes}
-              onChangeText={setCheckInNotes}
-              multiline
-              numberOfLines={4}
+          ))}
+
+          <View style={cs.actions}>
+            <Pressable style={cs.cancelBtn} onPress={onClose} accessibilityRole="button">
+              <Text style={cs.cancelText}>Cancel</Text>
+            </Pressable>
+            <Pressable
+              style={cs.submitBtn}
+              onPress={handleSubmit}
+              accessibilityRole="button"
+              accessibilityLabel="Post to community"
+            >
+              <Ionicons name="send" size={15} color="#fff" />
+              <Text style={cs.submitText}>Post</Text>
+            </Pressable>
+          </View>
+        </ScrollView>
+      </View>
+    </Modal>
+  );
+}
+
+// ─── Feed Post Card ───────────────────────────────────────────────────────────
+
+interface FeedCardProps {
+  post: CommunityPost;
+  onReact: (id: string, reaction: 'helpful' | 'onMyWay') => void;
+  onResolve: (id: string) => void;
+}
+
+function FeedCard({ post, onReact, onResolve }: FeedCardProps) {
+  const meta = POST_META[post.type];
+  const thermalColor = C.thermal[post.thermalLevel];
+  const thermalBg = C.thermalBg[post.thermalLevel];
+
+  const timeAgo = (() => {
+    const diff = Date.now() - post.timestamp;
+    const mins = Math.floor(diff / 60000);
+    const hours = Math.floor(diff / 3600000);
+    if (mins < 60) return `${mins}m`;
+    if (hours < 24) return `${hours}h`;
+    return `${Math.floor(hours / 24)}d`;
+  })();
+
+  return (
+    <View
+      style={[cs.feedCard, post.resolved && cs.feedCardResolved]}
+      accessibilityRole="article"
+      accessibilityLabel={`${post.type} post: ${post.title}`}
+    >
+      {/* Header Row */}
+      <View style={cs.feedCardHeader}>
+        <View style={[cs.postTypeTag, { backgroundColor: meta.color + '22', borderColor: meta.color + '66' }]}>
+          <Ionicons name={meta.icon as any} size={11} color={meta.color} />
+          <Text style={[cs.postTypeTagText, { color: meta.color }]}>{meta.label}</Text>
+        </View>
+
+        <View style={[cs.thermalTag, { backgroundColor: thermalBg, borderColor: thermalColor + '88' }]}>
+          <View style={[cs.thermalDot, { backgroundColor: thermalColor }]} />
+          <Text style={[cs.thermalTagText, { color: thermalColor }]}>
+            L{post.thermalLevel}
+          </Text>
+        </View>
+
+        <Text style={cs.feedTime}>{timeAgo}</Text>
+
+        {post.resolved && (
+          <View style={cs.resolvedBadge}>
+            <Ionicons name="checkmark-circle" size={11} color={C.success} />
+            <Text style={cs.resolvedBadgeText}>Resolved</Text>
+          </View>
+        )}
+      </View>
+
+      {/* Content */}
+      <Text style={cs.feedTitle}>{post.title}</Text>
+      <Text style={cs.feedBody} numberOfLines={3}>{post.body}</Text>
+
+      {post.location && (
+        <View style={cs.feedLocation}>
+          <Ionicons name="location-outline" size={12} color={C.textMuted} />
+          <Text style={cs.feedLocationText} numberOfLines={1}>{post.location}</Text>
+        </View>
+      )}
+
+      {/* Footer */}
+      <View style={cs.feedFooter}>
+        <View style={cs.feedAuthorRow}>
+          <View style={cs.authorDot} />
+          <Text style={cs.feedAuthor}>{post.author}</Text>
+          <Text style={cs.feedNeighborhood}>{post.neighborhood}</Text>
+        </View>
+
+        <View style={cs.feedReactions}>
+          <Pressable
+            style={[cs.reactionBtn, post.userReacted === 'helpful' && cs.reactionBtnActive]}
+            onPress={() => onReact(post.id, 'helpful')}
+            hitSlop={6}
+            accessibilityRole="button"
+            accessibilityLabel={`Mark helpful, ${post.reactions.helpful} reactions`}
+          >
+            <Ionicons
+              name={post.userReacted === 'helpful' ? 'thumbs-up' : 'thumbs-up-outline'}
+              size={13}
+              color={post.userReacted === 'helpful' ? C.accent : C.textMuted}
             />
+            <Text style={[cs.reactionCount, post.userReacted === 'helpful' && { color: C.accent }]}>
+              {post.reactions.helpful}
+            </Text>
+          </Pressable>
 
-            <View style={styles.notesActions}>
-              <TouchableOpacity
-                style={[styles.notesButton, styles.skipButton]}
-                onPress={confirmCheckIn}
-              >
-                <Text style={styles.skipButtonText}>Skip Notes</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.notesButton, styles.saveButton]}
-                onPress={confirmCheckIn}
-              >
-                <Text style={styles.saveButtonText}>Save & Check In</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
+          <Pressable
+            style={[cs.reactionBtn, post.userReacted === 'onMyWay' && cs.reactionBtnActive]}
+            onPress={() => onReact(post.id, 'onMyWay')}
+            hitSlop={6}
+            accessibilityRole="button"
+            accessibilityLabel={`On my way, ${post.reactions.onMyWay} responses`}
+          >
+            <Ionicons
+              name={post.userReacted === 'onMyWay' ? 'car' : 'car-outline'}
+              size={13}
+              color={post.userReacted === 'onMyWay' ? C.success : C.textMuted}
+            />
+            <Text style={[cs.reactionCount, post.userReacted === 'onMyWay' && { color: C.success }]}>
+              {post.reactions.onMyWay > 0 ? post.reactions.onMyWay : 'On way'}
+            </Text>
+          </Pressable>
+
+          {!post.resolved && post.type === 'alert' && (
+            <Pressable
+              style={cs.resolveBtn}
+              onPress={() => onResolve(post.id)}
+              hitSlop={6}
+              accessibilityRole="button"
+              accessibilityLabel="Mark as resolved"
+            >
+              <Text style={cs.resolveBtnText}>Resolved</Text>
+            </Pressable>
+          )}
         </View>
-      </Modal>
+      </View>
+    </View>
+  );
+}
 
-      {selectedResident && (
-        <CheckInHistoryModal
-          visible={showHistoryModal}
-          onClose={() => setShowHistoryModal(false)}
-          residentId={selectedResident.id}
-          residentName={selectedResident.name}
-        />
+// ─── Volunteer Card ───────────────────────────────────────────────────────────
+
+function VolunteerCard({ req }: { req: VolunteerRequest }) {
+  const urgMeta = URGENCY_META[req.urgency];
+  const timeAgo = (() => {
+    const h = Math.floor((Date.now() - req.requestedAt) / 3600000);
+    const m = Math.floor((Date.now() - req.requestedAt) / 60000);
+    return h >= 1 ? `${h}h ago` : `${m}m ago`;
+  })();
+
+  return (
+    <View style={[cs.volunteerCard, req.status === 'completed' && { opacity: 0.6 }]}>
+      <View style={cs.vCardHeader}>
+        <View style={[cs.urgencyBadge, { backgroundColor: urgMeta.bg, borderColor: urgMeta.color + '88' }]}>
+          <View style={[cs.urgencyDot, { backgroundColor: urgMeta.color }]} />
+          <Text style={[cs.urgencyText, { color: urgMeta.color }]}>{urgMeta.label}</Text>
+        </View>
+        <Text style={cs.vCardTime}>{timeAgo}</Text>
+        {req.status === 'completed' && (
+          <View style={cs.completedBadge}>
+            <Ionicons name="checkmark-circle" size={11} color={C.success} />
+            <Text style={cs.completedText}>Done</Text>
+          </View>
+        )}
+        {req.status === 'assigned' && (
+          <View style={cs.assignedBadge}>
+            <Text style={cs.assignedText}>Assigned</Text>
+          </View>
+        )}
+      </View>
+
+      <Text style={cs.vResidentName}>{req.resident}</Text>
+      <View style={cs.vAddressRow}>
+        <Ionicons name="location-outline" size={12} color={C.textMuted} />
+        <Text style={cs.vAddress}>{req.address}</Text>
+        <Text style={cs.vAge}>{req.age} yrs</Text>
+      </View>
+      <Text style={cs.vNotes} numberOfLines={2}>{req.notes}</Text>
+
+      {req.status === 'open' && (
+        <Pressable
+          style={cs.volunteerBtn}
+          onPress={() => Alert.alert('Volunteer', `You've signed up to check on ${req.resident}. Please go within the next hour.`)}
+          accessibilityRole="button"
+          accessibilityLabel={`Volunteer to check on ${req.resident}`}
+        >
+          <Ionicons name="hand-right-outline" size={14} color={C.bg} />
+          <Text style={cs.volunteerBtnText}>I'll Check On Them</Text>
+        </Pressable>
       )}
     </View>
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#fff' },
-  header: { padding: 24, paddingBottom: 16 },
-  title: { fontSize: 30, fontWeight: 'bold', color: COLORS.ocean },
-  subtitle: { fontSize: 16, color: '#6B7280', marginTop: 4 },
-  statsContainer: { flexDirection: 'row', paddingHorizontal: 16, marginBottom: 16 },
-  statCard: { flex: 1, backgroundColor: '#F9FAFB', borderRadius: 12, padding: 12, marginHorizontal: 4, borderLeftWidth: 3 },
-  statNumber: { fontSize: 24, fontWeight: 'bold', color: COLORS.ocean },
-  statLabel: { fontSize: 12, color: '#6B7280', marginTop: 4 },
-  filterContainer: { flexDirection: 'row', paddingHorizontal: 24, marginBottom: 16 },
-  filterTab: { flex: 1, paddingVertical: 10, alignItems: 'center', borderBottomWidth: 2, borderBottomColor: 'transparent' },
-  filterTabActive: { borderBottomColor: COLORS.ocean },
-  filterText: { fontSize: 14, color: '#6B7280' },
-  filterTextActive: { color: COLORS.ocean, fontWeight: '600' },
-  scrollView: { flex: 1 },
-  listContent: { padding: 16 },
-  residentCard: { backgroundColor: '#fff', borderRadius: 16, padding: 16, marginBottom: 16, borderWidth: 1, borderColor: '#E5E7EB' },
-  residentHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 },
-  residentInfo: { flex: 1 },
-  residentName: { fontSize: 18, fontWeight: 'bold', color: COLORS.ocean },
-  residentAge: { fontSize: 14, color: '#6B7280', marginTop: 2 },
-  statusBadge: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 12, gap: 6 },
-  statusText: { fontSize: 14, fontWeight: '600' },
-  residentDetails: { marginBottom: 12 },
-  detailRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 8, gap: 8 },
-  detailText: { fontSize: 14, color: '#374151', flex: 1 },
-  notesContainer: { backgroundColor: '#FEF3C7', padding: 10, borderRadius: 8, marginTop: 4 },
-  notesText: { fontSize: 13, color: '#92400E' },
-  actions: { flexDirection: 'row', gap: 8 },
-  actionButton: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 12, borderRadius: 10, gap: 6, minHeight: 44 },
-  callButton: { backgroundColor: COLORS.ocean },
-  checkInButton: { backgroundColor: COLORS.success },
-  historyButton: { backgroundColor: 'white', borderWidth: 1, borderColor: COLORS.ocean, width: 44, paddingHorizontal: 0 },
-  emergencyButton: { backgroundColor: COLORS.lava, width: 44, paddingHorizontal: 0 },
-  actionButtonText: { color: 'white', fontSize: 14, fontWeight: '600' },
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
-  notesModal: { backgroundColor: 'white', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, paddingBottom: 40 },
-  notesHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
-  notesTitle: { fontSize: 20, fontWeight: 'bold', color: COLORS.ocean },
-  notesInput: { backgroundColor: '#F9FAFB', borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 12, padding: 16, fontSize: 16, color: COLORS.ocean, minHeight: 100, textAlignVertical: 'top' },
-  notesActions: { flexDirection: 'row', gap: 12, marginTop: 20 },
-  notesButton: { flex: 1, paddingVertical: 16, borderRadius: 12, alignItems: 'center', minHeight: 44 },
-  skipButton: { backgroundColor: '#F3F4F6' },
-  skipButtonText: { color: COLORS.ocean, fontSize: 16, fontWeight: '600' },
-  saveButton: { backgroundColor: COLORS.success },
-  saveButtonText: { color: 'white', fontSize: 16, fontWeight: 'bold' },
+// ─── Quick Access Row ─────────────────────────────────────────────────────────
+
+function QuickAccessRow() {
+  const neighborStats = useMemo(() => getNeighborStats(loadNeighbors()), []);
+  const resourceCount = useMemo(() => loadResources().filter((r) => !r.claimed).length, []);
+
+  return (
+    <View style={cs.quickRow}>
+      <Pressable
+        style={cs.quickCard}
+        onPress={() => router.push('/community/neighbor-network')}
+        accessibilityRole="button"
+        accessibilityLabel={`Neighbor Network, ${neighborStats.needsCheckIn} need check-in`}
+      >
+        <View style={cs.quickIconWrap}>
+          <Ionicons name="people" size={20} color={C.accent} />
+          {neighborStats.needsCheckIn > 0 && (
+            <View style={cs.quickBadge}>
+              <Text style={cs.quickBadgeText}>{neighborStats.needsCheckIn}</Text>
+            </View>
+          )}
+        </View>
+        <Text style={cs.quickLabel}>Neighbors</Text>
+        <Text style={cs.quickSub}>
+          {neighborStats.needsCheckIn > 0
+            ? `${neighborStats.needsCheckIn} need check-in`
+            : `${neighborStats.total} registered`}
+        </Text>
+        <Ionicons name="chevron-forward" size={14} color={C.textMuted} style={{ marginTop: 2 }} />
+      </Pressable>
+
+      <Pressable
+        style={cs.quickCard}
+        onPress={() => router.push('/community/resources')}
+        accessibilityRole="button"
+        accessibilityLabel={`Resource Board, ${resourceCount} available`}
+      >
+        <View style={cs.quickIconWrap}>
+          <Ionicons name="cube" size={20} color={C.success} />
+          {resourceCount > 0 && (
+            <View style={[cs.quickBadge, { backgroundColor: C.success }]}>
+              <Text style={cs.quickBadgeText}>{resourceCount}</Text>
+            </View>
+          )}
+        </View>
+        <Text style={cs.quickLabel}>Resources</Text>
+        <Text style={cs.quickSub}>{resourceCount} available now</Text>
+        <Ionicons name="chevron-forward" size={14} color={C.textMuted} style={{ marginTop: 2 }} />
+      </Pressable>
+    </View>
+  );
+}
+
+// ─── Main Screen ──────────────────────────────────────────────────────────────
+
+export default function CommunityScreen() {
+  const [activeSection, setActiveSection] = useState<'feed' | 'checkins'>('feed');
+  const [posts, setPosts] = useState<CommunityPost[]>(() => loadPosts());
+  const [feedFilter, setFeedFilter] = useState<PostType | 'all'>('all');
+  const [volunteerFilter, setVolunteerFilter] = useState<VolunteerFilter>('All');
+  const [showCompose, setShowCompose] = useState(false);
+
+  // Feed data
+  const displayedPosts = useMemo(() => {
+    const filtered = feedFilter === 'all' ? posts : posts.filter((p) => p.type === feedFilter);
+    return [...filtered].sort((a, b) => b.timestamp - a.timestamp);
+  }, [posts, feedFilter]);
+
+  const alertCount = useMemo(
+    () => posts.filter((p) => p.type === 'alert' && !p.resolved).length,
+    [posts]
+  );
+
+  // Volunteer data
+  const displayedRequests = useMemo(() => {
+    switch (volunteerFilter) {
+      case 'Open':      return SAMPLE_REQUESTS.filter((r) => r.status === 'open');
+      case 'Assigned':  return SAMPLE_REQUESTS.filter((r) => r.status === 'assigned');
+      case 'Completed': return SAMPLE_REQUESTS.filter((r) => r.status === 'completed');
+      default:          return SAMPLE_REQUESTS;
+    }
+  }, [volunteerFilter]);
+
+  const openRequestCount = SAMPLE_REQUESTS.filter((r) => r.status === 'open').length;
+
+  const handleCompose = useCallback(
+    (data: Omit<CommunityPost, 'id' | 'timestamp' | 'reactions' | 'resolved'>) => {
+      addPost(data);
+      setPosts(loadPosts());
+      setShowCompose(false);
+    },
+    []
+  );
+
+  const handleReact = useCallback((id: string, reaction: 'helpful' | 'onMyWay') => {
+    setPosts(reactToPost(id, reaction));
+  }, []);
+
+  const handleResolve = useCallback((id: string) => {
+    Alert.alert('Mark Resolved', 'Mark this alert as resolved?', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Resolved', onPress: () => setPosts(resolvePost(id)) },
+    ]);
+  }, []);
+
+  return (
+    <SafeAreaView style={cs.safe}>
+      {/* Header */}
+      <View style={cs.header}>
+        <View>
+          <Text style={cs.headerTitle}>Community</Text>
+          <Text style={cs.headerSub}>
+            {alertCount > 0 ? `${alertCount} active alert${alertCount > 1 ? 's' : ''}` : 'Your heat network'}
+          </Text>
+        </View>
+        <Pressable
+          style={cs.composeHeaderBtn}
+          onPress={() => setShowCompose(true)}
+          accessibilityRole="button"
+          accessibilityLabel="Post to community"
+        >
+          <Ionicons name="create-outline" size={20} color={C.textPrimary} />
+        </Pressable>
+      </View>
+
+      {/* Section Tabs */}
+      <View style={cs.sectionTabs}>
+        {([
+          { key: 'feed',     label: 'Activity Feed',    badge: alertCount  },
+          { key: 'checkins', label: 'Volunteer',        badge: openRequestCount },
+        ] as const).map((tab) => (
+          <Pressable
+            key={tab.key}
+            style={[cs.sectionTab, activeSection === tab.key && cs.sectionTabActive]}
+            onPress={() => setActiveSection(tab.key)}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: activeSection === tab.key }}
+          >
+            <Text style={[cs.sectionTabText, activeSection === tab.key && cs.sectionTabTextActive]}>
+              {tab.label}
+            </Text>
+            {tab.badge > 0 && (
+              <View style={cs.sectionTabBadge}>
+                <Text style={cs.sectionTabBadgeText}>{tab.badge}</Text>
+              </View>
+            )}
+          </Pressable>
+        ))}
+      </View>
+
+      {/* ── Feed Section ── */}
+      {activeSection === 'feed' && (
+        <>
+          {/* Quick Access */}
+          <QuickAccessRow />
+
+          {/* Feed Filters */}
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={cs.filterRow}
+          >
+            {FEED_FILTERS.map((f) => (
+              <Pressable
+                key={f.key}
+                style={[cs.filterPill, feedFilter === f.key && cs.filterPillActive]}
+                onPress={() => setFeedFilter(f.key)}
+                accessibilityRole="tab"
+                accessibilityState={{ selected: feedFilter === f.key }}
+              >
+                {f.key !== 'all' && (
+                  <View
+                    style={[
+                      cs.filterDot,
+                      { backgroundColor: feedFilter === f.key ? '#fff' : POST_META[f.key as PostType].color },
+                    ]}
+                  />
+                )}
+                <Text style={[cs.filterPillText, feedFilter === f.key && cs.filterPillTextActive]}>
+                  {f.label}
+                </Text>
+              </Pressable>
+            ))}
+          </ScrollView>
+
+          {/* Posts */}
+          <ScrollView
+            style={cs.scrollArea}
+            contentContainerStyle={cs.scrollContent}
+            showsVerticalScrollIndicator={false}
+          >
+            {displayedPosts.length === 0 ? (
+              <View style={cs.emptyState}>
+                <Ionicons name="megaphone-outline" size={44} color={C.textMuted} />
+                <Text style={cs.emptyTitle}>Nothing posted yet</Text>
+                <Text style={cs.emptyBody}>
+                  Be the first to share a safety update, resource, or wellness check with your neighborhood.
+                </Text>
+                <Pressable
+                  style={cs.emptyActionBtn}
+                  onPress={() => setShowCompose(true)}
+                  accessibilityRole="button"
+                >
+                  <Ionicons name="create-outline" size={15} color="#fff" />
+                  <Text style={cs.emptyActionText}>Post Something</Text>
+                </Pressable>
+              </View>
+            ) : (
+              displayedPosts.map((post) => (
+                <FeedCard
+                  key={post.id}
+                  post={post}
+                  onReact={handleReact}
+                  onResolve={handleResolve}
+                />
+              ))
+            )}
+            <View style={{ height: 100 }} />
+          </ScrollView>
+        </>
+      )}
+
+      {/* ── Volunteer Section ── */}
+      {activeSection === 'checkins' && (
+        <>
+          {/* Summary */}
+          <View style={cs.volunteerSummary}>
+            <View style={cs.volStat}>
+              <Text style={[cs.volStatVal, { color: C.danger }]}>{openRequestCount}</Text>
+              <Text style={cs.volStatLabel}>Open</Text>
+            </View>
+            <View style={cs.volStatDivider} />
+            <View style={cs.volStat}>
+              <Text style={[cs.volStatVal, { color: C.warning }]}>
+                {SAMPLE_REQUESTS.filter((r) => r.status === 'assigned').length}
+              </Text>
+              <Text style={cs.volStatLabel}>Assigned</Text>
+            </View>
+            <View style={cs.volStatDivider} />
+            <View style={cs.volStat}>
+              <Text style={[cs.volStatVal, { color: C.success }]}>
+                {SAMPLE_REQUESTS.filter((r) => r.status === 'completed').length}
+              </Text>
+              <Text style={cs.volStatLabel}>Done Today</Text>
+            </View>
+          </View>
+
+          {openRequestCount > 0 && (
+            <View style={cs.volunteerAlert}>
+              <Ionicons name="alert-circle" size={14} color={C.danger} />
+              <Text style={cs.volunteerAlertText}>
+                {openRequestCount} neighbor{openRequestCount > 1 ? 's need' : ' needs'} a volunteer check-in
+              </Text>
+            </View>
+          )}
+
+          {/* Volunteer Filters */}
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={cs.filterRow}
+          >
+            {VOLUNTEER_FILTERS.map((f) => (
+              <Pressable
+                key={f}
+                style={[cs.filterPill, volunteerFilter === f && cs.filterPillActive]}
+                onPress={() => setVolunteerFilter(f)}
+                accessibilityRole="tab"
+                accessibilityState={{ selected: volunteerFilter === f }}
+              >
+                <Text style={[cs.filterPillText, volunteerFilter === f && cs.filterPillTextActive]}>
+                  {f}
+                </Text>
+              </Pressable>
+            ))}
+          </ScrollView>
+
+          <ScrollView
+            style={cs.scrollArea}
+            contentContainerStyle={cs.scrollContent}
+            showsVerticalScrollIndicator={false}
+          >
+            {displayedRequests.map((req) => (
+              <VolunteerCard key={req.id} req={req} />
+            ))}
+            <View style={{ height: 100 }} />
+          </ScrollView>
+        </>
+      )}
+
+      {/* FAB */}
+      <Pressable
+        style={cs.fab}
+        onPress={() => setShowCompose(true)}
+        accessibilityRole="button"
+        accessibilityLabel="Post to community feed"
+      >
+        <Ionicons name="add" size={26} color="#fff" />
+      </Pressable>
+
+      {/* Compose Modal */}
+      <ComposeModal
+        visible={showCompose}
+        onClose={() => setShowCompose(false)}
+        onSubmit={handleCompose}
+      />
+    </SafeAreaView>
+  );
+}
+
+// ─── Styles ───────────────────────────────────────────────────────────────────
+
+const cs = StyleSheet.create({
+  safe: { flex: 1, backgroundColor: C.bg },
+
+  // Header
+  header: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: 16, paddingTop: Platform.OS === 'android' ? 16 : 8, paddingBottom: 12,
+  },
+  headerTitle: { fontSize: 24, fontWeight: '800', color: C.textPrimary, fontFamily: 'Inter_700Bold' },
+  headerSub: { fontSize: 12, color: C.textMuted, marginTop: 2 },
+  composeHeaderBtn: { padding: 8, borderRadius: 10, backgroundColor: C.surface, borderWidth: 1, borderColor: C.border },
+
+  // Section Tabs
+  sectionTabs: {
+    flexDirection: 'row', borderBottomWidth: 1, borderBottomColor: C.border,
+    paddingHorizontal: 16, gap: 4,
+  },
+  sectionTab: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    paddingBottom: 12, paddingHorizontal: 4, marginRight: 20,
+    borderBottomWidth: 2, borderBottomColor: 'transparent',
+  },
+  sectionTabActive: { borderBottomColor: C.accent },
+  sectionTabText: { fontSize: 14, fontWeight: '600', color: C.textMuted },
+  sectionTabTextActive: { color: C.textPrimary },
+  sectionTabBadge: {
+    backgroundColor: C.danger, minWidth: 18, height: 18, borderRadius: 9,
+    alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4,
+  },
+  sectionTabBadgeText: { fontSize: 10, fontWeight: '700', color: '#fff' },
+
+  // Quick Access
+  quickRow: { flexDirection: 'row', gap: 10, paddingHorizontal: 16, paddingTop: 14, paddingBottom: 4 },
+  quickCard: {
+    flex: 1, backgroundColor: C.card, borderRadius: 14, padding: 14,
+    borderWidth: 1, borderColor: C.border,
+  },
+  quickIconWrap: { position: 'relative', marginBottom: 8, alignSelf: 'flex-start' },
+  quickBadge: {
+    position: 'absolute', top: -4, right: -8,
+    backgroundColor: C.danger, minWidth: 16, height: 16, borderRadius: 8,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  quickBadgeText: { fontSize: 9, fontWeight: '700', color: '#fff' },
+  quickLabel: { fontSize: 14, fontWeight: '700', color: C.textPrimary, fontFamily: 'Inter_700Bold' },
+  quickSub: { fontSize: 11, color: C.textSecondary, marginTop: 2 },
+
+  // Filters
+  filterRow: { paddingHorizontal: 16, paddingVertical: 10, gap: 8, alignItems: 'center' },
+  filterPill: {
+    flexDirection: 'row', alignItems: 'center', gap: 5,
+    paddingHorizontal: 12, paddingVertical: 7, borderRadius: 20,
+    backgroundColor: C.surface, borderWidth: 1, borderColor: C.border,
+    alignSelf: 'flex-start', height: 34,
+  },
+  filterPillActive: { backgroundColor: C.accent, borderColor: C.accent },
+  filterDot: { width: 6, height: 6, borderRadius: 3 },
+  filterPillText: { fontSize: 12, color: C.textSecondary, fontWeight: '500' },
+  filterPillTextActive: { color: '#fff', fontWeight: '600' },
+
+  // Scroll
+  scrollArea: { flex: 1 },
+  scrollContent: { paddingHorizontal: 16, paddingTop: 8 },
+
+  // Feed Card
+  feedCard: {
+    backgroundColor: C.card, borderRadius: 14, marginBottom: 12,
+    padding: 14, borderWidth: 1, borderColor: C.border,
+  },
+  feedCardResolved: { opacity: 0.65 },
+  feedCardHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8, flexWrap: 'wrap' },
+  postTypeTag: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    paddingHorizontal: 7, paddingVertical: 3, borderRadius: 6, borderWidth: 1,
+  },
+  postTypeTagText: { fontSize: 10, fontWeight: '700' },
+  thermalTag: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    paddingHorizontal: 7, paddingVertical: 3, borderRadius: 6, borderWidth: 1,
+  },
+  thermalDot: { width: 5, height: 5, borderRadius: 3 },
+  thermalTagText: { fontSize: 10, fontWeight: '700' },
+  feedTime: { fontSize: 11, color: C.textMuted, marginLeft: 'auto' as any },
+  resolvedBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: 3,
+    paddingHorizontal: 7, paddingVertical: 3, borderRadius: 6,
+    backgroundColor: '#052E20',
+  },
+  resolvedBadgeText: { fontSize: 10, fontWeight: '600', color: C.success },
+
+  feedTitle: { fontSize: 14, fontWeight: '700', color: C.textPrimary, marginBottom: 4, fontFamily: 'Inter_700Bold' },
+  feedBody: { fontSize: 13, color: C.textSecondary, lineHeight: 19, marginBottom: 8 },
+  feedLocation: { flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 10 },
+  feedLocationText: { fontSize: 11, color: C.textMuted, flex: 1 },
+
+  feedFooter: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingTop: 10, borderTopWidth: 1, borderTopColor: C.border },
+  feedAuthorRow: { flexDirection: 'row', alignItems: 'center', gap: 5, flex: 1 },
+  authorDot: { width: 5, height: 5, borderRadius: 3, backgroundColor: C.accent },
+  feedAuthor: { fontSize: 11, color: C.textSecondary, fontWeight: '500' },
+  feedNeighborhood: { fontSize: 11, color: C.textMuted },
+  feedReactions: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  reactionBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    paddingHorizontal: 8, paddingVertical: 5, borderRadius: 8,
+    backgroundColor: C.surface, borderWidth: 1, borderColor: C.border,
+    minHeight: 28,
+  },
+  reactionBtnActive: { borderColor: C.accent, backgroundColor: C.accent + '22' },
+  reactionCount: { fontSize: 11, color: C.textMuted, fontWeight: '500' },
+  resolveBtn: {
+    paddingHorizontal: 8, paddingVertical: 5, borderRadius: 8,
+    backgroundColor: C.surface, borderWidth: 1, borderColor: C.border,
+    minHeight: 28, justifyContent: 'center',
+  },
+  resolveBtnText: { fontSize: 11, color: C.textMuted, fontWeight: '500' },
+
+  // Volunteer
+  volunteerSummary: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: 16, paddingVertical: 14,
+    borderBottomWidth: 1, borderBottomColor: C.border,
+  },
+  volStat: { flex: 1, alignItems: 'center' },
+  volStatVal: { fontSize: 28, fontWeight: '800', fontFamily: 'Inter_700Bold' },
+  volStatLabel: { fontSize: 11, color: C.textMuted, marginTop: 2 },
+  volStatDivider: { width: 1, height: 36, backgroundColor: C.border },
+  volunteerAlert: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    backgroundColor: '#1C0000', borderWidth: 1, borderColor: '#7F1D1D',
+    marginHorizontal: 16, marginTop: 12, borderRadius: 10,
+    paddingHorizontal: 14, paddingVertical: 9,
+  },
+  volunteerAlertText: { color: '#FCA5A5', fontSize: 13, fontWeight: '600' },
+
+  volunteerCard: {
+    backgroundColor: C.card, borderRadius: 14, marginBottom: 12,
+    padding: 14, borderWidth: 1, borderColor: C.border,
+  },
+  vCardHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
+  urgencyBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: 5,
+    paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, borderWidth: 1,
+  },
+  urgencyDot: { width: 6, height: 6, borderRadius: 3 },
+  urgencyText: { fontSize: 11, fontWeight: '700' },
+  vCardTime: { fontSize: 11, color: C.textMuted, marginLeft: 'auto' as any },
+  completedBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: 3,
+    backgroundColor: '#052E20', paddingHorizontal: 7, paddingVertical: 3, borderRadius: 6,
+  },
+  completedText: { fontSize: 10, color: C.success, fontWeight: '600' },
+  assignedBadge: { backgroundColor: '#1C1400', paddingHorizontal: 7, paddingVertical: 3, borderRadius: 6 },
+  assignedText: { fontSize: 10, color: C.warning, fontWeight: '600' },
+  vResidentName: { fontSize: 15, fontWeight: '700', color: C.textPrimary, fontFamily: 'Inter_700Bold', marginBottom: 4 },
+  vAddressRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 6 },
+  vAddress: { fontSize: 12, color: C.textSecondary, flex: 1 },
+  vAge: { fontSize: 11, color: C.textMuted },
+  vNotes: { fontSize: 13, color: C.textSecondary, lineHeight: 19, marginBottom: 10 },
+  volunteerBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    backgroundColor: '#F8FAFC', paddingVertical: 10, paddingHorizontal: 16,
+    borderRadius: 10, alignSelf: 'flex-start', minHeight: 40,
+  },
+  volunteerBtnText: { fontSize: 13, fontWeight: '700', color: C.bg },
+
+  // Empty State
+  emptyState: { alignItems: 'center', paddingTop: 60, paddingHorizontal: 32 },
+  emptyTitle: { fontSize: 17, fontWeight: '700', color: C.textPrimary, marginTop: 16, textAlign: 'center' },
+  emptyBody: { fontSize: 14, color: C.textSecondary, textAlign: 'center', marginTop: 8, lineHeight: 22 },
+  emptyActionBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    backgroundColor: C.accent, paddingHorizontal: 20, paddingVertical: 12,
+    borderRadius: 12, marginTop: 24,
+  },
+  emptyActionText: { color: '#fff', fontSize: 15, fontWeight: '600' },
+
+  // FAB
+  fab: {
+    position: 'absolute', bottom: 28, right: 20, width: 56, height: 56,
+    borderRadius: 28, backgroundColor: C.accent,
+    alignItems: 'center', justifyContent: 'center',
+    shadowColor: '#000', shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3, shadowRadius: 8, elevation: 8,
+  },
+
+  // Compose Modal
+  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' },
+  sheet: {
+    backgroundColor: C.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24,
+    padding: 24, paddingBottom: Platform.OS === 'ios' ? 40 : 24,
+  },
+  handle: {
+    width: 40, height: 4, borderRadius: 2, backgroundColor: C.border,
+    alignSelf: 'center', marginBottom: 20,
+  },
+  sheetTitle: { fontSize: 20, fontWeight: '700', color: C.textPrimary, fontFamily: 'Inter_700Bold', marginBottom: 20 },
+  sectionLabel: { fontSize: 11, fontWeight: '700', color: C.textMuted, letterSpacing: 0.8, textTransform: 'uppercase', marginBottom: 10 },
+
+  typeGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 20 },
+  typeBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    paddingHorizontal: 12, paddingVertical: 9, borderRadius: 10,
+    backgroundColor: C.card, borderWidth: 1.5, borderColor: C.border,
+    minWidth: '45%',
+  },
+  typeBtnText: { fontSize: 13, fontWeight: '600', color: C.textMuted },
+
+  thermalRow: { flexDirection: 'row', gap: 8, marginBottom: 20 },
+  thermalBtn: {
+    flex: 1, alignItems: 'center', paddingVertical: 10, borderRadius: 10,
+    borderWidth: 1.5,
+  },
+  thermalBtnSelected: {},
+  thermalBtnText: { fontSize: 16, fontWeight: '800', fontFamily: 'Inter_700Bold' },
+
+  fieldBlock: { marginBottom: 14 },
+  fieldLabel: { fontSize: 12, fontWeight: '600', color: C.textSecondary, marginBottom: 6, letterSpacing: 0.3 },
+  fieldInput: {
+    backgroundColor: C.card, borderRadius: 10, paddingHorizontal: 14, paddingVertical: 11,
+    color: C.textPrimary, fontSize: 14, borderWidth: 1, borderColor: C.border,
+    textAlignVertical: 'top',
+  },
+
+  actions: { flexDirection: 'row', gap: 10, marginTop: 8 },
+  cancelBtn: {
+    flex: 1, paddingVertical: 14, borderRadius: 12,
+    backgroundColor: C.card, alignItems: 'center',
+    borderWidth: 1, borderColor: C.border,
+  },
+  cancelText: { fontSize: 15, fontWeight: '600', color: C.textSecondary },
+  submitBtn: {
+    flex: 2, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    gap: 8, paddingVertical: 14, borderRadius: 12, backgroundColor: C.accent,
+  },
+  submitText: { fontSize: 15, fontWeight: '700', color: '#fff' },
 });

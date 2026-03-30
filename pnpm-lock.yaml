@@ -11,6 +11,9 @@ importers:
       '@babel/runtime':
         specifier: ^7.29.2
         version: 7.29.2
+      '@expo/vector-icons':
+        specifier: ~14.0.4
+        version: 14.0.4
       '@react-native-community/slider':
         specifier: ^5.1.2
         version: 5.1.2
