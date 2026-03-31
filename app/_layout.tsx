@@ -11,6 +11,7 @@ export default function RootLayout() {
       <Stack.Screen name="emergency/contacts" />
       <Stack.Screen name="settings" options={{ headerShown: false }} />
       <Stack.Screen name="exposure/tracker" options={{ headerShown: false }} />
+      <Stack.Screen name="profile/medications" options={{ headerShown: false }} />
       </Stack>
     </SettingsProvider>
   );

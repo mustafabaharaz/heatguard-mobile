@@ -3,6 +3,7 @@ import PressableScale from '../../src/components/ui/PressableScale';
 import {
   View, Text, ScrollView, StyleSheet, TextInput,
   TouchableOpacity, Switch, Alert, Platform,
+  Pressable,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useRouter } from 'expo-router';
@@ -207,6 +208,17 @@ export default function HeatProfileScreen() {
               accessibilityLabel="Takes heat-sensitive medications"
             />
           </View>
+          {profile.takesMedications && (
+            <TouchableOpacity
+              onPress={() => router.push('/profile/medications')}
+              accessibilityRole="button"
+              style={{ paddingVertical: 10, paddingHorizontal: 4 }}
+            >
+              <Text style={{ color: COLORS.ocean, fontSize: 13, fontWeight: '600' }}>
+                Configure medication warnings →
+              </Text>
+            </TouchableOpacity>
+          )}
         </View>
 
         <TouchableOpacity

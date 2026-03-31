@@ -16,6 +16,7 @@ import { scheduleHeatAlert } from '../../src/services/notifications/push';
 import { getHeatProfile, getRiskMultiplier, HeatProfile } from '../../src/features/profile/storage/profileStorage';
 import ExposureSessionCard from '../../src/components/exposure/ExposureSessionCard';
 import { PassiveTracker } from '../../src/features/exposure/passiveTracker';
+import MedicationWarningCard from '../../src/components/medications/MedicationWarningCard';
 
 const COLORS = {
   glacier: '#8ECAE6',
@@ -391,6 +392,9 @@ export default function HomeScreen() {
 
         {/* Exposure Tracker */}
         <ExposureSessionCard currentTempF={(temperature * 9 / 5) + 32} />
+
+        {/* Medication Warnings */}
+        <MedicationWarningCard tempC={temperature} takesMedications={heatProfile.takesMedications} />
 
         {/* Emergency SOS */}
         <TouchableOpacity
