@@ -13,6 +13,7 @@ export default function RootLayout() {
       <Stack.Screen name="exposure/tracker" options={{ headerShown: false }} />
       <Stack.Screen name="profile/medications" options={{ headerShown: false }} />
       <Stack.Screen name="cooldown/timer" options={{ headerShown: false }} />
+      <Stack.Screen name="preparedness/index" options={{ headerShown: false }} />
       </Stack>
     </SettingsProvider>
   );
