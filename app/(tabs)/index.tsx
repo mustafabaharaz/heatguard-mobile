@@ -19,6 +19,15 @@ import { PassiveTracker } from '../../src/features/exposure/passiveTracker';
 import MedicationWarningCard from '../../src/components/medications/MedicationWarningCard';
 import CooldownCard from '../../src/components/cooldown/CooldownCard';
 import PreparednessCard from '../../src/components/preparedness/PreparednessCard';
+import { DailyBriefCard } from '../../src/components/features/DailyBriefCard';
+import { HydrationCard } from '../../src/components/features/HydrationCard';
+import { AcclimationCard, VehicleAlertCard } from '../../src/components/features/Phase6Cards';
+import { getCachedBrief, generateDailyBrief, cacheBrief, type DailyBrief } from '../../src/features/brief/briefEngine';
+import { calculateHydrationTarget, computeHydrationSummary, mlToOz, type HydrationSummary } from '../../src/features/hydration/hydrationEngine';
+import { getHydrationLogs } from '../../src/features/hydration/hydrationStorage';
+import { getAcclimationScore } from '../../src/features/acclimation/acclimationEngine';
+import { getAcclimationState as loadAcclimationState, type AcclimationState } from '../../src/features/acclimation/acclimationStorage';
+import { getActiveVehicleSession, type VehicleSession } from '../../src/features/vehicle/vehicleAlertEngine';
 
 const COLORS = {
   glacier: '#8ECAE6',
@@ -29,7 +38,7 @@ const COLORS = {
   safe: '#2D9B6F',
 };
 
-// ─── Personalized risk helpers ───────────────────────────────────────────────
+// ─── Personalized risk helpers ────────────────────────────────────────────────
 
 function getPersonalRiskLevel(temp: number, multiplier: number): 'safe' | 'caution' | 'high' | 'critical' {
   const adjusted = temp * multiplier;
@@ -72,7 +81,7 @@ function getRiskLevelColor(level: 'safe' | 'caution' | 'high' | 'critical'): str
   return COLORS.safe;
 }
 
-// ─── Predictive Wellness Card ─────────────────────────────────────────────────
+// ─── Predictive Wellness Card ──────────────────────────────────────────────────
 
 function PredictiveWellnessCard({ temperature, profile }: { temperature: number; profile: HeatProfile }) {
   const router = useRouter();
@@ -159,7 +168,7 @@ function PredictiveWellnessCard({ temperature, profile }: { temperature: number;
   );
 }
 
-// ─── Intelligence Hub Card ────────────────────────────────────────────────────
+// ─── Intelligence Hub Card ─────────────────────────────────────────────────────
 
 function IntelligenceHubCard({ temperature }: { temperature: number }) {
   const router = useRouter();
@@ -243,7 +252,7 @@ function IntelligenceHubCard({ temperature }: { temperature: number }) {
   );
 }
 
-// ─── Main Screen ──────────────────────────────────────────────────────────────
+// ─── Main Screen ───────────────────────────────────────────────────────────────
 
 export default function HomeScreen() {
   const router = useRouter();
@@ -255,11 +264,52 @@ export default function HomeScreen() {
   const [heatProfile, setHeatProfile] = useState<HeatProfile>(getHeatProfile());
   const lastAlertTemp = useRef<number>(0);
 
+  // ── Phase 6 state ──────────────────────────────────────────────────────────
+  const [dailyBrief, setDailyBrief] = useState<DailyBrief | null>(null);
+  const [hydrationSummary, setHydrationSummary] = useState<HydrationSummary | null>(null);
+  const [acclimState, setAcclimState] = useState<AcclimationState>(loadAcclimationState());
+  const [vehicleSession, setVehicleSession] = useState<VehicleSession | null>(null);
+
   const { location, error: locationError } = useLocation();
 
   useFocusEffect(useCallback(() => {
-    setHeatProfile(getHeatProfile());
-  }, []));
+    const profile = getHeatProfile();
+    setHeatProfile(profile);
+
+    // ── Phase 6 data loading ─────────────────────────────────────────────────
+    const tempF = weather ? (weather.temperature * 9 / 5) + 32 : 108;
+
+    // Daily brief — use cache if today's, else regenerate
+    const cachedBrief = getCachedBrief();
+    if (cachedBrief) {
+      setDailyBrief(cachedBrief);
+    } else if (profile?.profileComplete) {
+      const acclimRaw = loadAcclimationState();
+      const hydTarget = calculateHydrationTarget(profile, tempF);
+      const hydSummary = computeHydrationSummary(hydTarget, getHydrationLogs());
+      const brief = generateDailyBrief({
+        profile,
+        forecastHighF: tempF,
+        hydrationTargetOz: mlToOz(hydTarget.dailyTargetMl),
+        hydrationPercentComplete: hydSummary.percentComplete,
+        acclimationDay: acclimRaw.isActive ? acclimRaw.currentDay : null,
+        acclimationScore: getAcclimationScore(acclimRaw.completedDays.length),
+        medicationWarnings: profile.medications?.length ?? 0,
+      });
+      cacheBrief(brief);
+      setDailyBrief(brief);
+    }
+
+    // Hydration summary
+    if (profile) {
+      const hydTarget = calculateHydrationTarget(profile, tempF);
+      setHydrationSummary(computeHydrationSummary(hydTarget, getHydrationLogs()));
+    }
+
+    // Acclimation + vehicle session
+    setAcclimState(loadAcclimationState());
+    setVehicleSession(getActiveVehicleSession());
+  }, [weather]));
 
   const fetchWeather = useCallback(async () => {
     if (!location) return;
@@ -293,6 +343,7 @@ export default function HomeScreen() {
   const temperature = weather?.temperature || 38;
   const heatIndex = weather?.feelsLike || 42;
   const locationName = weather?.location || 'Your Location';
+  const temperatureF = (temperature * 9 / 5) + 32;
 
   const getRiskColor = () => {
     if (temperature >= 40) return COLORS.lava;
@@ -353,6 +404,7 @@ export default function HomeScreen() {
         contentContainerStyle={styles.content}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       >
+        {/* ── Header ──────────────────────────────────────────────────────── */}
         <View style={styles.header}>
           <Text style={styles.title}>🛡️ HeatGuard</Text>
           <PressableScale onPress={() => router.push("/settings")} accessibilityLabel="Settings" accessibilityRole="button" style={styles.headerAction}>
@@ -364,7 +416,7 @@ export default function HomeScreen() {
           </View>
         </View>
 
-        {/* Temperature Card */}
+        {/* ── Temperature Card ─────────────────────────────────────────────── */}
         <View style={[styles.tempCard, { backgroundColor: getRiskColor() }]}>
           <Thermometer size={48} color={COLORS.ocean} strokeWidth={2} />
           <Text style={styles.tempLarge}>{formatTemp(temperature, false)}</Text>
@@ -377,7 +429,7 @@ export default function HomeScreen() {
           </View>
         </View>
 
-        {/* General Alert */}
+        {/* ── General Alert ────────────────────────────────────────────────── */}
         <View style={styles.alertCard}>
           <View style={styles.alertHeader}>
             <AlertCircle size={20} color={COLORS.ocean} />
@@ -386,23 +438,41 @@ export default function HomeScreen() {
           <Text style={styles.alertText}>{getAdviceText()}</Text>
         </View>
 
-        {/* Predictive Wellness Dashboard */}
+        {/* ── Phase 6: Daily Brief ─────────────────────────────────────────── */}
+        <DailyBriefCard brief={dailyBrief} />
+
+        {/* ── Phase 6: Hydration ───────────────────────────────────────────── */}
+        <View style={styles.phase6Card}>
+          <HydrationCard summary={hydrationSummary} />
+        </View>
+
+        {/* ── Predictive Wellness ──────────────────────────────────────────── */}
         <PredictiveWellnessCard temperature={temperature} profile={heatProfile} />
 
-        {/* Intelligence Hub */}
+        {/* ── Intelligence Hub ─────────────────────────────────────────────── */}
         <IntelligenceHubCard temperature={temperature} />
 
-        {/* Exposure Tracker */}
-        <ExposureSessionCard currentTempF={(temperature * 9 / 5) + 32} />
+        {/* ── Phase 6: Acclimation ─────────────────────────────────────────── */}
+        <View style={styles.phase6Card}>
+          <AcclimationCard state={acclimState} />
+        </View>
 
-        {/* Medication Warnings */}
+        {/* ── Phase 6: Vehicle Alert ───────────────────────────────────────── */}
+        <View style={styles.phase6Card}>
+          <VehicleAlertCard session={vehicleSession} currentTempF={temperatureF} />
+        </View>
+
+        {/* ── Exposure Tracker ─────────────────────────────────────────────── */}
+        <ExposureSessionCard currentTempF={temperatureF} />
+
+        {/* ── Medication Warnings ──────────────────────────────────────────── */}
         <MedicationWarningCard tempC={temperature} takesMedications={heatProfile.takesMedications} />
 
         <CooldownCard tempC={temperature} />
 
         <PreparednessCard />
 
-        {/* Emergency SOS */}
+        {/* ── Emergency SOS ────────────────────────────────────────────────── */}
         <TouchableOpacity
           onPress={() => setShowEmergencyModal(true)}
           style={styles.sosButton}
@@ -452,6 +522,8 @@ const styles = StyleSheet.create({
   alertHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
   alertTitle: { fontSize: 18, fontWeight: '600', color: COLORS.ocean, marginLeft: 8 },
   alertText: { fontSize: 16, color: '#374151', lineHeight: 24 },
+
+  phase6Card: { marginBottom: 16 },
 
   wellnessCard: {
     backgroundColor: '#fff', borderRadius: 16, padding: 20, marginBottom: 16,

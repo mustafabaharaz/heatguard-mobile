@@ -263,7 +263,7 @@ export default function CooldownTimerScreen() {
       {/* Header */}
       <View style={styles.header}>
         <Pressable
-          onPress={() => router.back()}
+          onPress={() => router.canGoBack() ? router.back() : router.replace('/(tabs)')}
           style={styles.backBtn}
           accessibilityRole="button"
           accessibilityLabel="Go back"
