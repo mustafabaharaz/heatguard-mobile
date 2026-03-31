@@ -28,6 +28,10 @@ import { getHydrationLogs } from '../../src/features/hydration/hydrationStorage'
 import { getAcclimationScore } from '../../src/features/acclimation/acclimationEngine';
 import { getAcclimationState as loadAcclimationState, type AcclimationState } from '../../src/features/acclimation/acclimationStorage';
 import { getActiveVehicleSession, type VehicleSession } from '../../src/features/vehicle/vehicleAlertEngine';
+import { HeatWatchCard } from '../../src/components/neighborhood/HeatWatchCard';
+import { NetworkHubCard } from '../../src/components/network/NetworkHubCard';
+import { RouteSafetyCard } from '../../src/components/routes/RouteSafetyCard';
+
 
 const COLORS = {
   glacier: '#8ECAE6',
@@ -471,6 +475,13 @@ export default function HomeScreen() {
         <CooldownCard tempC={temperature} />
 
         <PreparednessCard />
+
+        <HeatWatchCard />
+
+        <NetworkHubCard />
+
+        <RouteSafetyCard />
+        
 
         {/* ── Emergency SOS ────────────────────────────────────────────────── */}
         <TouchableOpacity
