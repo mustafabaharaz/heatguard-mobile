@@ -14,6 +14,8 @@ import { getCurrentWeather, WeatherData } from '../../src/services/api/weatherAp
 import { useLocation } from '../../src/lib/hooks/useLocation';
 import { scheduleHeatAlert } from '../../src/services/notifications/push';
 import { getHeatProfile, getRiskMultiplier, HeatProfile } from '../../src/features/profile/storage/profileStorage';
+import ExposureSessionCard from '../../src/components/exposure/ExposureSessionCard';
+import { PassiveTracker } from '../../src/features/exposure/passiveTracker';
 
 const COLORS = {
   glacier: '#8ECAE6',
@@ -166,7 +168,6 @@ function IntelligenceHubCard({ temperature }: { temperature: number }) {
 
   return (
     <View style={styles.hubCard}>
-      {/* Header */}
       <View style={styles.hubHeader}>
         <View style={styles.hubIconWrap}>
           <Brain size={18} color="#FFFFFF" />
@@ -177,7 +178,6 @@ function IntelligenceHubCard({ temperature }: { temperature: number }) {
         </View>
       </View>
 
-      {/* 3-metric summary row */}
       <View style={styles.hubMetrics}>
         <View style={styles.hubMetric}>
           <Text style={styles.hubMetricLabel}>Tomorrow's Peak</Text>
@@ -198,7 +198,6 @@ function IntelligenceHubCard({ temperature }: { temperature: number }) {
         </View>
       </View>
 
-      {/* Two deep-link buttons */}
       <View style={styles.hubButtonRow}>
         <TouchableOpacity
           style={styles.hubButton}
@@ -225,7 +224,6 @@ function IntelligenceHubCard({ temperature }: { temperature: number }) {
         </TouchableOpacity>
       </View>
 
-      {/* Exposure history — full-width second row */}
       <TouchableOpacity
         style={[styles.hubButton, styles.hubButtonExposure]}
         onPress={() => router.push('/intelligence/exposure-history')}
@@ -265,8 +263,11 @@ export default function HomeScreen() {
     try {
       const data = await getCurrentWeather(location.lat, location.lon);
       setWeather(data);
-
       const temp = data.temperature;
+      const tempF = (temp * 9 / 5) + 32;
+      if (PassiveTracker.getState().isTracking) {
+        await PassiveTracker.updateTemperature(tempF);
+      }
       const threshold = heatProfile.alertThreshold ?? 35;
       if (temp >= threshold && temp !== lastAlertTemp.current) {
         const riskLevel = temp >= 40 ? 'critical' : temp >= 35 ? 'high' : 'caution';
@@ -385,8 +386,11 @@ export default function HomeScreen() {
         {/* Predictive Wellness Dashboard */}
         <PredictiveWellnessCard temperature={temperature} profile={heatProfile} />
 
-        {/* ✦ Intelligence Hub */}
+        {/* Intelligence Hub */}
         <IntelligenceHubCard temperature={temperature} />
+
+        {/* Exposure Tracker */}
+        <ExposureSessionCard currentTempF={(temperature * 9 / 5) + 32} />
 
         {/* Emergency SOS */}
         <TouchableOpacity
@@ -427,7 +431,6 @@ const styles = StyleSheet.create({
   locationRow: { flexDirection: 'row', alignItems: 'center', marginTop: 4 },
   subtitle: { fontSize: 16, color: '#6B7280', marginLeft: 4 },
 
-  // Temp card
   tempCard: { borderRadius: 24, padding: 32, marginBottom: 24, alignItems: 'center' },
   tempLarge: { fontSize: 72, fontWeight: 'bold', color: COLORS.ocean, marginTop: 16 },
   tempSubtext: { fontSize: 20, color: COLORS.ocean, opacity: 0.8, marginTop: 8 },
@@ -435,13 +438,11 @@ const styles = StyleSheet.create({
   riskBadge: { backgroundColor: 'rgba(29, 53, 87, 0.1)', paddingHorizontal: 24, paddingVertical: 12, borderRadius: 20, marginTop: 24 },
   riskText: { fontSize: 18, fontWeight: '600', color: COLORS.ocean },
 
-  // Alert card
   alertCard: { backgroundColor: '#F9FAFB', borderRadius: 16, padding: 24, marginBottom: 16 },
   alertHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
   alertTitle: { fontSize: 18, fontWeight: '600', color: COLORS.ocean, marginLeft: 8 },
   alertText: { fontSize: 16, color: '#374151', lineHeight: 24 },
 
-  // Wellness card
   wellnessCard: {
     backgroundColor: '#fff', borderRadius: 16, padding: 20, marginBottom: 16,
     shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 12, shadowOffset: { width: 0, height: 4 },
@@ -462,8 +463,6 @@ const styles = StyleSheet.create({
   factorText: { fontSize: 12, fontWeight: '600' },
   thresholdRow: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingTop: 12, borderTopWidth: 1, borderTopColor: '#F3F4F6' },
   thresholdText: { fontSize: 13, color: '#6B7280', flex: 1 },
-
-  // Setup state
   wellnessSetupRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 14, marginBottom: 16 },
   wellnessSetupText: { flex: 1 },
   wellnessSetupHeadline: { fontSize: 15, fontWeight: '600', color: COLORS.ocean, marginBottom: 4 },
@@ -471,138 +470,34 @@ const styles = StyleSheet.create({
   wellnessSetupBtn: { alignSelf: 'flex-start', backgroundColor: '#EFF6FF', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 10 },
   wellnessSetupBtnText: { fontSize: 14, fontWeight: '600', color: COLORS.ocean },
 
-  // Intelligence Hub card
   hubCard: {
-    backgroundColor: COLORS.ocean,
-    borderRadius: 16,
-    padding: 18,
-    marginBottom: 16,
-    shadowColor: COLORS.ocean,
-    shadowOpacity: 0.25,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 4,
+    backgroundColor: COLORS.ocean, borderRadius: 16, padding: 18, marginBottom: 16,
+    shadowColor: COLORS.ocean, shadowOpacity: 0.25, shadowRadius: 12, shadowOffset: { width: 0, height: 4 }, elevation: 4,
   },
-  hubHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    marginBottom: 16,
-  },
-  hubIconWrap: {
-    width: 32,
-    height: 32,
-    borderRadius: 10,
-    backgroundColor: 'rgba(255,255,255,0.15)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  hubTitle: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  hubBadge: {
-    backgroundColor: 'rgba(255,255,255,0.15)',
-    borderRadius: 10,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-  },
-  hubBadgeText: {
-    color: 'rgba(255,255,255,0.85)',
-    fontSize: 11,
-    fontWeight: '600',
-  },
-  hubMetrics: {
-    flexDirection: 'row',
-    backgroundColor: 'rgba(255,255,255,0.08)',
-    borderRadius: 12,
-    padding: 14,
-    marginBottom: 12,
-  },
-  hubMetric: {
-    flex: 1,
-    alignItems: 'center',
-    gap: 6,
-  },
-  hubDivider: {
-    width: 1,
-    backgroundColor: 'rgba(255,255,255,0.15)',
-    marginVertical: 2,
-  },
-  hubMetricLabel: {
-    color: 'rgba(255,255,255,0.55)',
-    fontSize: 10,
-    fontWeight: '600',
-    textTransform: 'uppercase',
-    letterSpacing: 0.4,
-    textAlign: 'center',
-  },
-  hubMetricValue: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '700',
-    textAlign: 'center',
-  },
-  hubLevelPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    borderRadius: 10,
-    borderWidth: 1,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-  },
-  hubLevelDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-  },
-  hubLevelText: {
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  hubButtonRow: {
-    flexDirection: 'row',
-    gap: 10,
-    marginBottom: 10,
-  },
-  hubButton: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.12)',
-    borderRadius: 12,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    gap: 6,
-  },
-  hubButtonAlt: {
-    backgroundColor: 'rgba(59,130,246,0.25)',
-  },
-  hubButtonExposure: {
-    flex: 0,
-    backgroundColor: 'rgba(255,255,255,0.07)',
-    marginTop: 0,
-  },
-  hubButtonText: {
-    color: '#FFFFFF',
-    fontSize: 13,
-    fontWeight: '600',
-    flex: 1,
-  },
-  hubButtonMeta: {
-    color: 'rgba(255,255,255,0.4)',
-    fontSize: 11,
-  },
+  hubHeader: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 16 },
+  hubIconWrap: { width: 32, height: 32, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.15)', alignItems: 'center', justifyContent: 'center' },
+  hubTitle: { color: '#FFFFFF', fontSize: 16, fontWeight: '700' },
+  hubBadge: { backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3 },
+  hubBadgeText: { color: 'rgba(255,255,255,0.85)', fontSize: 11, fontWeight: '600' },
+  hubMetrics: { flexDirection: 'row', backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 12, padding: 14, marginBottom: 12 },
+  hubMetric: { flex: 1, alignItems: 'center', gap: 6 },
+  hubDivider: { width: 1, backgroundColor: 'rgba(255,255,255,0.15)', marginVertical: 2 },
+  hubMetricLabel: { color: 'rgba(255,255,255,0.55)', fontSize: 10, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.4, textAlign: 'center' },
+  hubMetricValue: { color: '#FFFFFF', fontSize: 14, fontWeight: '700', textAlign: 'center' },
+  hubLevelPill: { flexDirection: 'row', alignItems: 'center', gap: 4, borderRadius: 10, borderWidth: 1, paddingHorizontal: 8, paddingVertical: 3 },
+  hubLevelDot: { width: 6, height: 6, borderRadius: 3 },
+  hubLevelText: { fontSize: 11, fontWeight: '700' },
+  hubButtonRow: { flexDirection: 'row', gap: 10, marginBottom: 10 },
+  hubButton: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: 12, paddingVertical: 10, paddingHorizontal: 12, gap: 6 },
+  hubButtonAlt: { backgroundColor: 'rgba(59,130,246,0.25)' },
+  hubButtonExposure: { flex: 0, backgroundColor: 'rgba(255,255,255,0.07)', marginTop: 0 },
+  hubButtonText: { color: '#FFFFFF', fontSize: 13, fontWeight: '600', flex: 1 },
+  hubButtonMeta: { color: 'rgba(255,255,255,0.4)', fontSize: 11 },
 
-  // SOS
-  sosButton: { backgroundColor: COLORS.lava, borderRadius: 16, padding: 24, alignItems: 'center', minHeight: 44, marginBottom: 0 },
+  sosButton: { backgroundColor: COLORS.lava, borderRadius: 16, padding: 24, alignItems: 'center', minHeight: 44, marginBottom: 0, marginTop: 16 },
   sosButtonText: { color: '#fff', fontSize: 20, fontWeight: 'bold' },
   sosButtonSubtext: { color: 'rgba(255,255,255,0.9)', fontSize: 14, marginTop: 4 },
 
-  // Footer
   footer: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: 24, opacity: 0.6 },
   footerText: { fontSize: 14, color: '#6B7280', marginLeft: 8 },
 });
