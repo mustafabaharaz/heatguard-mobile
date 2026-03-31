@@ -5,6 +5,8 @@ import { Platform } from 'react-native';
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
     shouldShowAlert: true,
+    shouldShowBanner: true,
+    shouldShowList: true,
     shouldPlaySound: true,
     shouldSetBadge: true,
   }),
@@ -59,6 +61,7 @@ export async function scheduleDailyCheck(hour: number = 14) {
       sound: true,
     },
     trigger: {
+      type: 'calendar' as any,
       hour,
       minute: 0,
       repeats: true,

@@ -1,3 +1,6 @@
+import { SkeletonThermalCard, SkeletonInfoCard, SkeletonPostRow, SkeletonForecastRow } from '../../src/components/ui/Skeleton';
+import AnimatedEntrance from '../../src/components/ui/AnimatedEntrance';
+import PressableScale from '../../src/components/ui/PressableScale';
 // ─────────────────────────────────────────────────────────────────────────────
 // HeatGuard · Heat Forecast Screen
 // 5-day personalised forecast. Each day shows: a directive banner, hourly
@@ -237,7 +240,7 @@ export default function ForecastScreen() {
     // Bridge HeatProfile (Phase 1) → ProfileInput (forecastEngine)
     const profile: ProfileInput = {
       name:          raw.name,
-      age:           raw.age,
+      age:           parseInt(raw.age, 10) || undefined,
       activityLevel: raw.activityLevel as 'low' | 'moderate' | 'high',
       threshold:     raw.alertThreshold,
       conditions: [

@@ -1,3 +1,6 @@
+import haptics from '../../src/utils/haptics';
+import AnimatedEntrance from '../../src/components/ui/AnimatedEntrance';
+import PressableScale from '../../src/components/ui/PressableScale';
 // app/community/resources.tsx
 // Community Resource Exchange — Phase 2: Community Network
 
@@ -242,7 +245,7 @@ function ResourceCard({ resource, onClaim, onRemove }: ResourceCardProps) {
         resource.urgent && s.urgentCard,
         expired && s.expiredCard,
       ]}
-      accessibilityRole="article"
+      accessibilityRole="none"
       accessibilityLabel={`${resource.title}, ${meta.label}, posted ${postedTime}`}
     >
       {/* Urgent Badge */}

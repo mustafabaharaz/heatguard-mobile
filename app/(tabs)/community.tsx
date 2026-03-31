@@ -1,3 +1,7 @@
+import haptics from '../../src/utils/haptics';
+import { SkeletonThermalCard, SkeletonInfoCard, SkeletonPostRow, SkeletonForecastRow } from '../../src/components/ui/Skeleton';
+import AnimatedEntrance from '../../src/components/ui/AnimatedEntrance';
+import PressableScale from '../../src/components/ui/PressableScale';
 // app/(tabs)/community.tsx
 // Community Hub — Phase 2: Community Network
 // Sections: Activity Feed · Volunteer Check-ins
@@ -263,7 +267,7 @@ function FeedCard({ post, onReact, onResolve }: FeedCardProps) {
   return (
     <View
       style={[cs.feedCard, post.resolved && cs.feedCardResolved]}
-      accessibilityRole="article"
+      accessibilityRole="none"
       accessibilityLabel={`${post.type} post: ${post.title}`}
     >
       {/* Header Row */}

@@ -1,3 +1,6 @@
+import haptics from '../../src/utils/haptics';
+import AnimatedEntrance from '../../src/components/ui/AnimatedEntrance';
+import PressableScale from '../../src/components/ui/PressableScale';
 // app/community/neighbor-network.tsx
 // Neighbor Wellness Network — Phase 2: Community Network
 
@@ -277,7 +280,7 @@ function NeighborCard({ neighbor, onCheckIn, onRemove }: NeighborCardProps) {
   return (
     <View
       style={[s.neighborCard, needsAttention && s.neighborCardAttention]}
-      accessibilityRole="article"
+      accessibilityRole="none"
       accessibilityLabel={`${neighbor.name}, status ${statusMeta.label}`}
     >
       {/* Avatar + Status Row */}

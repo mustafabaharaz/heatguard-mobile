@@ -1,3 +1,5 @@
+import AnimatedEntrance from '../../src/components/ui/AnimatedEntrance';
+import PressableScale from '../../src/components/ui/PressableScale';
 // ─────────────────────────────────────────────────────────────────────────────
 // HeatGuard · Personal Exposure Analytics
 // Visualises the user's cumulative heat exposure over time using check-in

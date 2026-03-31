@@ -1,3 +1,6 @@
+import haptics from '../../src/utils/haptics';
+import AnimatedEntrance from '../../src/components/ui/AnimatedEntrance';
+import PressableScale from '../../src/components/ui/PressableScale';
 // ─────────────────────────────────────────────────────────────────────────────
 // HeatGuard · Activity Safety Planner
 // Pick an activity and duration — the engine scores every 30-min window

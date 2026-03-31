@@ -1,3 +1,9 @@
+import { useSettings } from '../../src/context/SettingsContext';
+import { Ionicons } from '@expo/vector-icons';
+import haptics from '../../src/utils/haptics';
+import { SkeletonThermalCard, SkeletonInfoCard, SkeletonPostRow, SkeletonForecastRow } from '../../src/components/ui/Skeleton';
+import AnimatedEntrance from '../../src/components/ui/AnimatedEntrance';
+import PressableScale from '../../src/components/ui/PressableScale';
 import { View, Text, TouchableOpacity, ScrollView, RefreshControl, Alert, Linking, StyleSheet, ActivityIndicator } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { AlertCircle, Thermometer, RefreshCw, MapPin, User, TrendingUp, ShieldAlert, Brain, ChevronRight, Zap, BarChart2 } from 'lucide-react-native';
@@ -65,6 +71,7 @@ function getRiskLevelColor(level: 'safe' | 'caution' | 'high' | 'critical'): str
 
 function PredictiveWellnessCard({ temperature, profile }: { temperature: number; profile: HeatProfile }) {
   const router = useRouter();
+  const { formatTemp } = useSettings();
   const multiplier = getRiskMultiplier(profile);
   const level = getPersonalRiskLevel(temperature, multiplier);
   const advice = getPersonalAdvice(temperature, profile, multiplier);
@@ -151,6 +158,7 @@ function PredictiveWellnessCard({ temperature, profile }: { temperature: number;
 
 function IntelligenceHubCard({ temperature }: { temperature: number }) {
   const router = useRouter();
+  const { formatTemp } = useSettings();
 
   const tomorrowLevel = temperature >= 40 ? 'Crisis' : temperature >= 35 ? 'Extreme' : temperature >= 30 ? 'High Alert' : 'Caution';
   const tomorrowColor = temperature >= 40 ? '#7C2D12' : temperature >= 35 ? '#DC2626' : temperature >= 30 ? '#EA580C' : '#D97706';
@@ -237,6 +245,8 @@ function IntelligenceHubCard({ temperature }: { temperature: number }) {
 // ─── Main Screen ──────────────────────────────────────────────────────────────
 
 export default function HomeScreen() {
+  const router = useRouter();
+  const { formatTemp } = useSettings();
   const [refreshing, setRefreshing] = useState(false);
   const [showEmergencyModal, setShowEmergencyModal] = useState(false);
   const [weather, setWeather] = useState<WeatherData | null>(null);
@@ -341,6 +351,9 @@ export default function HomeScreen() {
       >
         <View style={styles.header}>
           <Text style={styles.title}>🛡️ HeatGuard</Text>
+          <PressableScale onPress={() => router.push("/settings")} accessibilityLabel="Settings" accessibilityRole="button" style={styles.headerAction}>
+            <Ionicons name="settings-outline" size={22} color={COLORS.ocean} />
+          </PressableScale>
           <View style={styles.locationRow}>
             <MapPin size={16} color="#6B7280" />
             <Text style={styles.subtitle}>{locationName}</Text>
@@ -350,8 +363,8 @@ export default function HomeScreen() {
         {/* Temperature Card */}
         <View style={[styles.tempCard, { backgroundColor: getRiskColor() }]}>
           <Thermometer size={48} color={COLORS.ocean} strokeWidth={2} />
-          <Text style={styles.tempLarge}>{temperature}°</Text>
-          <Text style={styles.tempSubtext}>Feels like {heatIndex}°C</Text>
+          <Text style={styles.tempLarge}>{formatTemp(temperature, false)}</Text>
+          <Text style={styles.tempSubtext}>Feels like {formatTemp(heatIndex)}</Text>
           {weather?.description && (
             <Text style={styles.weatherDesc}>{weather.description}</Text>
           )}
@@ -408,7 +421,8 @@ const styles = StyleSheet.create({
   loadingText: { marginTop: 16, fontSize: 16, color: '#6B7280' },
   scrollView: { flex: 1 },
   content: { padding: 24 },
-  header: { marginBottom: 32 },
+  header: { marginBottom: 32, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  headerAction: { width: 44, height: 44, alignItems: "center", justifyContent: "center" },
   title: { fontSize: 30, fontWeight: 'bold', color: COLORS.ocean },
   locationRow: { flexDirection: 'row', alignItems: 'center', marginTop: 4 },
   subtitle: { fontSize: 16, color: '#6B7280', marginLeft: 4 },

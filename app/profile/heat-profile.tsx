@@ -1,3 +1,5 @@
+import haptics from '../../src/utils/haptics';
+import PressableScale from '../../src/components/ui/PressableScale';
 import {
   View, Text, ScrollView, StyleSheet, TextInput,
   TouchableOpacity, Switch, Alert, Platform,

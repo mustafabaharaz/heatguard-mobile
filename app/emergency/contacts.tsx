@@ -1,3 +1,4 @@
+import haptics from '../../src/utils/haptics';
 import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Alert, TextInput, Modal } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { Plus, Trash2, Phone, Star, X } from 'lucide-react-native';

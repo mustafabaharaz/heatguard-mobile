@@ -1,12 +1,16 @@
 import "../global.css";
 import { Stack } from 'expo-router';
+import { SettingsProvider } from '../src/context/SettingsContext';
 
 export default function RootLayout() {
   return (
+    <SettingsProvider>
     <Stack screenOptions={{ headerShown: false }}>
       <Stack.Screen name="onboarding/index" />
       <Stack.Screen name="(tabs)" />
       <Stack.Screen name="emergency/contacts" />
-    </Stack>
+      <Stack.Screen name="settings" options={{ headerShown: false }} />
+      </Stack>
+    </SettingsProvider>
   );
 }
