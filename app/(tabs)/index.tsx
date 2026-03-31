@@ -17,6 +17,7 @@ import { getHeatProfile, getRiskMultiplier, HeatProfile } from '../../src/featur
 import ExposureSessionCard from '../../src/components/exposure/ExposureSessionCard';
 import { PassiveTracker } from '../../src/features/exposure/passiveTracker';
 import MedicationWarningCard from '../../src/components/medications/MedicationWarningCard';
+import CooldownCard from '../../src/components/cooldown/CooldownCard';
 
 const COLORS = {
   glacier: '#8ECAE6',
@@ -395,6 +396,8 @@ export default function HomeScreen() {
 
         {/* Medication Warnings */}
         <MedicationWarningCard tempC={temperature} takesMedications={heatProfile.takesMedications} />
+
+        <CooldownCard tempC={temperature} />
 
         {/* Emergency SOS */}
         <TouchableOpacity
