@@ -483,6 +483,16 @@ export default function HomeScreen() {
         <RouteSafetyCard />
         
 
+        {/* ── Emergency Offline Card ───────────────────────────────────────── */}
+        <TouchableOpacity
+          onPress={() => router.push('/offline/emergency-card')}
+          style={styles.offlineCardBtn}
+          activeOpacity={0.8}
+        >
+          <Text style={styles.offlineCardBtnText}>⚡ Emergency Info Card</Text>
+          <Text style={styles.offlineCardBtnSub}>Works offline · Symptoms · Shelters · Contacts</Text>
+        </TouchableOpacity>
+
         {/* ── Emergency SOS ────────────────────────────────────────────────── */}
         <TouchableOpacity
           onPress={() => setShowEmergencyModal(true)}
@@ -590,6 +600,10 @@ const styles = StyleSheet.create({
   sosButton: { backgroundColor: COLORS.lava, borderRadius: 16, padding: 24, alignItems: 'center', minHeight: 44, marginBottom: 0, marginTop: 16 },
   sosButtonText: { color: '#fff', fontSize: 20, fontWeight: 'bold' },
   sosButtonSubtext: { color: 'rgba(255,255,255,0.9)', fontSize: 14, marginTop: 4 },
+
+  offlineCardBtn: { backgroundColor: '#1E293B', borderRadius: 14, padding: 18, alignItems: 'center', marginBottom: 12, borderWidth: 1, borderColor: '#334155' },
+  offlineCardBtnText: { color: '#F1F5F9', fontSize: 16, fontWeight: '700' },
+  offlineCardBtnSub: { color: '#94A3B8', fontSize: 12, marginTop: 4 },
 
   footer: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: 24, opacity: 0.6 },
   footerText: { fontSize: 14, color: '#6B7280', marginLeft: 8 },

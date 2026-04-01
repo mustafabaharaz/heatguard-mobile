@@ -152,7 +152,7 @@ function TimerRing({
           {timerState === 'complete' ? (
             <>
               <Ionicons name="checkmark-circle" size={48} color={COLORS.safe} />
-              <Text style={[styles.ringComplete, { color: COLORS.safe }]}>Done!</Text>
+              <Text style={[styles.ringCompleteText, { color: COLORS.safe }]}>Done!</Text>
             </>
           ) : (
             <>

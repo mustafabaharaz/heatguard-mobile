@@ -15,6 +15,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { getRiskMultiplier } from '../../src/features/profile/storage/profileStorage';
 
 import {
   generatePreparednessPlan,
@@ -228,7 +229,7 @@ export default function PreparednessScreen() {
     takesMedications: profile.takesMedications,
   };
 
-  const forecast = generateForecast(profileInput);
+  const forecast = generateForecast(getRiskMultiplier(heatProfile), heatProfile);
   const plan     = generatePreparednessPlan(forecast, profile);
 
   const [completedIds, setCompleted] = useState<string[]>(getCompletedActions());

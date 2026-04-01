@@ -4,9 +4,9 @@
 
 // HeatProfile subset
 interface ProfileInput {
-  age: number;
+  age: number | string;
   activityLevel: 'sedentary' | 'light' | 'moderate' | 'active' | 'athlete';
-  conditions: string[];
+  conditions?: string[];
   weight?: number; // kg — optional, defaults to 70
 }
 
@@ -70,7 +70,7 @@ export function calculateHydrationTarget(
   // Age adjustment: older adults have reduced thirst perception
   // and are at higher risk for dehydration
   const ageAdjustmentMl =
-    profile.age > 70 ? 450 : profile.age > 65 ? 300 : profile.age > 55 ? 150 : 0;
+    Number(profile.age) > 70 ? 450 : Number(profile.age) > 65 ? 300 : Number(profile.age) > 55 ? 150 : 0;
 
   const dailyTargetMl = Math.round(
     baseMl + heatBonusMl + activityBonusMl + ageAdjustmentMl,

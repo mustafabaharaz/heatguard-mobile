@@ -12,6 +12,7 @@ import { generatePreparednessPlan, getSeverityColor } from '../../features/prepa
 import { getCompletedActions } from '../../features/preparedness/preparednessStorage';
 import { getHeatProfile } from '../../features/profile/storage/profileStorage';
 import { generateForecast } from '../../features/intelligence/forecastEngine';
+import { getRiskMultiplier } from '../../features/profile/storage/profileStorage';
 
 const C = {
   surface: '#FFFFFF',
@@ -37,7 +38,7 @@ export default function PreparednessCard() {
       ].filter(Boolean) as string[],
       takesMedications: profile.takesMedications,
     };
-    const forecast = generateForecast(profileInput);
+    const forecast = generateForecast(getRiskMultiplier(profile), profile);
     return generatePreparednessPlan(forecast, profile);
   }, []);
 

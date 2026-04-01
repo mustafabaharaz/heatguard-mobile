@@ -163,13 +163,13 @@ export default function DailyBriefScreen() {
     const hydrationSummary = computeHydrationSummary(hydrationTarget, logs);
 
     const result = generateDailyBrief({
-      profile,
+      age: Number(profile.age),
       forecastHighF,
       hydrationTargetOz: mlToOz(hydrationTarget.dailyTargetMl),
       hydrationPercentComplete: hydrationSummary.percentComplete,
       acclimationDay,
       acclimationScore,
-      medicationWarnings: profile.medications?.length ?? 0,
+      medicationWarnings: profile.takesMedications ? 1 : 0,
     });
 
     cacheBrief(result);
