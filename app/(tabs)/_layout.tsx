@@ -165,7 +165,6 @@ const tabItemStyles = StyleSheet.create({
  *    current heat level (safe→caution→extreme→crisis).
  *  - Spring scale animation when switching tabs.
  *  - Haptic selection feedback on tab switch.
- *  - Badge on Community tab for unread activity count.
  *  - Safe area aware bottom padding.
  *
  * Props are forwarded from Expo Router's tab bar component interface.
@@ -174,7 +173,6 @@ export default function TabLayout() {
   // In production, derive this from your thermal store / context.
   // Here we read it from the dashboard's last known temperature.
   const [thermalColor, setThermalColor] = useState<string>('#1D3557');
-  const [communityBadge, setCommunityBadge] = useState(0);
 
   const insets = useSafeAreaInsets();
 
@@ -212,23 +210,6 @@ export default function TabLayout() {
       />
 
       <Tabs.Screen
-        name="community"
-        options={{
-          title: 'Community',
-          tabBarIcon: ({ focused }) => (
-            <TabItem
-              focused={focused}
-              label="Community"
-              icon="people-outline"
-              focusedIcon="people"
-              badgeCount={communityBadge}
-            />
-          ),
-          tabBarAccessibilityLabel: `Community${communityBadge > 0 ? `, ${communityBadge} unread` : ''}`,
-        }}
-      />
-
-      <Tabs.Screen
         name="map"
         options={{
           title: 'Map',
@@ -245,20 +226,23 @@ export default function TabLayout() {
       />
 
       <Tabs.Screen
-        name="intelligence"
+        name="profile"
         options={{
-          title: 'Forecast',
+          title: 'Profile',
           tabBarIcon: ({ focused }) => (
             <TabItem
               focused={focused}
-              label="Forecast"
-              icon="analytics-outline"
-              focusedIcon="analytics"
+              label="Profile"
+              icon="person-outline"
+              focusedIcon="person"
             />
           ),
-          tabBarAccessibilityLabel: 'Heat forecast and activity planner',
+          tabBarAccessibilityLabel: 'Profile, heat profile and emergency contacts',
         }}
       />
+
+      {/* Community is hidden in v1 (simulated data). Kept for v2. */}
+      <Tabs.Screen name="community" options={{ href: null }} />
     </Tabs>
   );
 }
