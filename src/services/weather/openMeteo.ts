@@ -70,8 +70,9 @@ export async function fetchOpenMeteo(
   isDefaultLocation: boolean,
 ): Promise<WeatherSnapshot> {
   const params = [
-    `latitude=${lat.toFixed(4)}`,
-    `longitude=${lon.toFixed(4)}`,
+    // Rounded to ~1 km: plenty for weather, and keeps the user's exact spot private
+    `latitude=${lat.toFixed(2)}`,
+    `longitude=${lon.toFixed(2)}`,
     'current=temperature_2m,relative_humidity_2m,apparent_temperature,uv_index,weather_code,is_day',
     'hourly=temperature_2m,apparent_temperature,relative_humidity_2m,uv_index',
     'daily=temperature_2m_max,temperature_2m_min,apparent_temperature_max,uv_index_max',
