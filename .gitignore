@@ -43,3 +43,4 @@ node_modules/
 .expo/
 .env.local
 *.log
+.env
