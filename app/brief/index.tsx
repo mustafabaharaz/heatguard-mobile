@@ -22,8 +22,8 @@ import {
   getHeatProfile,
   type HeatProfile,
 } from '../../src/features/profile/storage/profileStorage';
-import { getAcclimationState, getAcclimationScore } from '../../src/features/acclimation/acclimationEngine';
-import { getAcclimationState as loadAcclimationState } from '../../src/features/acclimation/acclimationStorage';
+import { getAcclimationScore, getAcclimationScore } from '../../src/features/acclimation/acclimationEngine';
+import { getAcclimationScore as loadAcclimationState } from '../../src/features/acclimation/acclimationStorage';
 import { calculateHydrationTarget, computeHydrationSummary, mlToOz } from '../../src/features/hydration/hydrationEngine';
 import { getHydrationLogs } from '../../src/features/hydration/hydrationStorage';
 

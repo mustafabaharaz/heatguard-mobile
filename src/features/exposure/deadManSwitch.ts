@@ -15,6 +15,7 @@
  */
 
 import { Platform, Linking } from 'react-native';
+import { dispatchDeadManAlert } from '../watch/watchAlertEngine';
 
 // ── Types ─────────────────────────────────────────────────────────────────
 

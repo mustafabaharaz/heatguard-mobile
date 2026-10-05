@@ -31,6 +31,9 @@ import { getActiveVehicleSession, type VehicleSession } from '../../src/features
 import { HeatWatchCard } from '../../src/components/neighborhood/HeatWatchCard';
 import { NetworkHubCard } from '../../src/components/network/NetworkHubCard';
 import { RouteSafetyCard } from '../../src/components/routes/RouteSafetyCard';
+import WatchStatusCard from '../../src/components/home/WatchStatusCard';
+import { syncToWatch } from '../../src/features/watch/watchDataSync';
+import { checkAndDispatchThermalEscalation } from '../../src/features/watch/watchAlertEngine';
 
 
 const COLORS = {
@@ -315,34 +318,51 @@ export default function HomeScreen() {
     setVehicleSession(getActiveVehicleSession());
   }, [weather]));
 
-  const fetchWeather = useCallback(async () => {
-    if (!location) return;
-    try {
-      const data = await getCurrentWeather(location.lat, location.lon);
-      setWeather(data);
-      const temp = data.temperature;
-      const tempF = (temp * 9 / 5) + 32;
-      if (PassiveTracker.getState().isTracking) {
-        await PassiveTracker.updateTemperature(tempF);
-      }
-      const threshold = heatProfile.alertThreshold ?? 35;
-      if (temp >= threshold && temp !== lastAlertTemp.current) {
-        const riskLevel = temp >= 40 ? 'critical' : temp >= 35 ? 'high' : 'caution';
-        await scheduleHeatAlert(temp, riskLevel);
-        lastAlertTemp.current = temp;
-      }
-    } catch (error) {
-      console.error('Failed to fetch weather:', error);
-    } finally {
-      setLoading(false);
-    }
-  }, [location, heatProfile.alertThreshold]);
+    const fetchWeather = useCallback(async () => {
+      if (!location) return;
+      try {
+        const data = await getCurrentWeather(location.lat, location.lon);
+        const temp = data.temperature;
+        const tempF = (temp * 9 / 5) + 32;
 
-  useEffect(() => {
-    fetchWeather();
-    const interval = setInterval(fetchWeather, 5 * 60 * 1000);
-    return () => clearInterval(interval);
-  }, [fetchWeather]);
+        setWeather(data);
+
+        // Watch sync
+        const thermalLvl =
+          temp >= 40 ? 'crisis' as const :
+          temp >= 35 ? 'extreme' as const :
+          temp >= 30 ? 'high' as const :
+          temp >= 25 ? 'caution' as const : 'safe' as const;
+
+        syncToWatch({
+          temperatureF: tempF,
+          feelsLikeF: (data.feelsLike * 9 / 5) + 32,
+          humidity: data.humidity ?? 20,
+          heatIndexF: (data.feelsLike * 9 / 5) + 32,
+        });
+        checkAndDispatchThermalEscalation(thermalLvl, tempF);
+
+        if (PassiveTracker.getState().isTracking) {
+          await PassiveTracker.updateTemperature(tempF);
+        }
+
+        const threshold = heatProfile.alertThreshold ?? 35;
+        if (temp >= threshold && temp !== lastAlertTemp.current) {
+          const riskLevel = temp >= 40 ? 'critical' : temp >= 35 ? 'high' : 'caution';
+          await scheduleHeatAlert(temp, riskLevel);
+          lastAlertTemp.current = temp;
+        }
+      } catch (error) {
+        console.error('Failed to fetch weather:', error);
+      } finally {
+        setLoading(false);
+      }
+    }, [location, heatProfile.alertThreshold]);
+      useEffect(() => {
+        fetchWeather();
+        const interval = setInterval(fetchWeather, 5 * 60 * 1000);
+        return () => clearInterval(interval);
+      }, [fetchWeather]);
 
   const temperature = weather?.temperature || 38;
   const heatIndex = weather?.feelsLike || 42;
@@ -481,6 +501,16 @@ export default function HomeScreen() {
         <NetworkHubCard />
 
         <RouteSafetyCard />
+
+        <WatchStatusCard
+          currentTempF={temperatureF}
+          thermalLevel={
+            temperature >= 40 ? 'crisis' :
+            temperature >= 35 ? 'extreme' :
+            temperature >= 30 ? 'high' :
+            temperature >= 25 ? 'caution' : 'safe'
+          }
+        />
         
 
         {/* ── Emergency Offline Card ───────────────────────────────────────── */}
