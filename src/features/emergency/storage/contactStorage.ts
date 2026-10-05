@@ -24,7 +24,7 @@ let storage: any;
 if (Platform.OS === 'web') {
   storage = new WebStorage();
 } else {
-  const { MMKV } = require('react-native-mmkv');
+  const { MMKV } = require('../../../lib/mmkvCompat');
   storage = new MMKV();
 }
 

@@ -38,7 +38,7 @@ if (Platform.OS === 'web') {
   };
 } else {
   try {
-    const { MMKV } = require('react-native-mmkv');
+    const { MMKV } = require('../../lib/mmkvCompat');
     const mmkv = new MMKV({ id: 'exposure-storage' });
     storage = {
       getItem: (k) => mmkv.getString(k) ?? null,

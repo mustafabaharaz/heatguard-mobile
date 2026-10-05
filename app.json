@@ -37,7 +37,8 @@
         {
           "locationWhenInUsePermission": "HeatGuard uses your location to show the heat conditions and forecast where you are."
         }
-      ]
+      ],
+      "./plugins/withFmtCxx17"
     ],
     "extra": {
       "router": {

@@ -12,7 +12,7 @@ const store = {
         return localStorage.getItem(STORAGE_KEY);
       }
       // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const { MMKV } = require('react-native-mmkv');
+      const { MMKV } = require('../../lib/mmkvCompat');
       return new MMKV().getString(STORAGE_KEY) ?? null;
     } catch {
       return null;
@@ -25,7 +25,7 @@ const store = {
         return;
       }
       // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const { MMKV } = require('react-native-mmkv');
+      const { MMKV } = require('../../lib/mmkvCompat');
       new MMKV().set(STORAGE_KEY, value);
     } catch {
       // fail silently

@@ -9,6 +9,7 @@ import {
   Alert,
   Dimensions,
 } from 'react-native';
+import Svg, { Circle } from 'react-native-svg';
 import { router, useFocusEffect } from 'expo-router';
 import {
   calculateHydrationTarget,
@@ -61,14 +62,14 @@ function HydrationRing({ summary }: { summary: HydrationSummary }) {
 
   return (
     <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}>
-      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
-        <circle
+      <Svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+        <Circle
           cx={size / 2} cy={size / 2} r={radius}
           fill="none"
           stroke="rgba(255,255,255,0.07)"
           strokeWidth={strokeWidth}
         />
-        <circle
+        <Circle
           cx={size / 2} cy={size / 2} r={radius}
           fill="none"
           stroke={color}
@@ -76,9 +77,10 @@ function HydrationRing({ summary }: { summary: HydrationSummary }) {
           strokeDasharray={circumference}
           strokeDashoffset={progress}
           strokeLinecap="round"
-          transform={`rotate(-90 ${size / 2} ${size / 2})`}
+          rotation={-90}
+          origin={`${size / 2}, ${size / 2}`}
         />
-      </svg>
+      </Svg>
       <View style={StyleSheet.absoluteFill as object}>
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
           <Text style={{ fontSize: 11, color: COLORS.text.tertiary, letterSpacing: 1.5, marginBottom: 4 }}>

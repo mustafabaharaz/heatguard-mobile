@@ -193,14 +193,14 @@ const briefStore = {
   get: (): string | null => {
     try {
       if (typeof localStorage !== 'undefined') return localStorage.getItem(BRIEF_KEY);
-      const { MMKV } = require('react-native-mmkv'); // eslint-disable-line @typescript-eslint/no-var-requires
+      const { MMKV } = require('../../lib/mmkvCompat'); // eslint-disable-line @typescript-eslint/no-var-requires
       return new MMKV().getString(BRIEF_KEY) ?? null;
     } catch { return null; }
   },
   set: (value: string): void => {
     try {
       if (typeof localStorage !== 'undefined') { localStorage.setItem(BRIEF_KEY, value); return; }
-      const { MMKV } = require('react-native-mmkv'); // eslint-disable-line @typescript-eslint/no-var-requires
+      const { MMKV } = require('../../lib/mmkvCompat'); // eslint-disable-line @typescript-eslint/no-var-requires
       new MMKV().set(BRIEF_KEY, value);
     } catch {}
   },

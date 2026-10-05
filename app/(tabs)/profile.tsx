@@ -22,11 +22,12 @@ export default function ProfileScreen() {
 
   useEffect(() => {
     checkNotificationPermission();
-    setContactCount(getContacts().length);
   }, []);
 
+  // Refresh every time this tab comes into view (tabs stay mounted)
   useFocusEffect(useCallback(() => {
     setHeatProfile(getHeatProfile());
+    setContactCount(getContacts().length);
   }, []));
 
   const checkNotificationPermission = async () => {

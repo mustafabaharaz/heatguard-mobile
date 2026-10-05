@@ -64,7 +64,7 @@ export default function OnboardingScreen() {
       if (Platform.OS === 'web') {
         localStorage.setItem('onboarding_complete', 'true');
       } else {
-        const { MMKV } = require('react-native-mmkv');
+        const { MMKV } = require('../../src/lib/mmkvCompat');
         const storage = new MMKV();
         storage.set('onboarding_complete', true);
       }

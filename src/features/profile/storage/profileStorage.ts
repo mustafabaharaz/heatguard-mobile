@@ -4,7 +4,7 @@ export interface HeatProfile { name: string; age: string; activityLevel: Activit
 const DEFAULT_PROFILE: HeatProfile = { name: '', age: '', activityLevel: 'medium', alertThreshold: 35, hasDiabetes: false, hasHeartDisease: false, hasRespiratoryIssues: false, isElderly: false, takesMedications: false, profileComplete: false };
 const KEY = 'heatguard_heat_profile';
 let storage: any = null;
-function getStorage() { if (storage) return storage; if (Platform.OS !== 'web') { try { const { MMKV } = require('react-native-mmkv'); storage = new MMKV({ id: 'profile-storage' }); } catch { storage = null; } } return storage; }
+function getStorage() { if (storage) return storage; if (Platform.OS !== 'web') { try { const { MMKV } = require('../../../lib/mmkvCompat'); storage = new MMKV({ id: 'profile-storage' }); } catch { storage = null; } } return storage; }
 export function saveHeatProfile(p: HeatProfile) { const d = JSON.stringify(p); const s = getStorage(); if (s) s.set(KEY, d); else { try { localStorage.setItem(KEY, d); } catch {} } }
 export function getHeatProfile(): HeatProfile { try { const s = getStorage(); let d: string | null = null; if (s) d = s.getString(KEY) ?? null; else d = localStorage.getItem(KEY); if (d) return { ...DEFAULT_PROFILE, ...JSON.parse(d) }; } catch {} return { ...DEFAULT_PROFILE }; }
 export function clearHeatProfile() { const s = getStorage(); if (s) s.delete(KEY); else { try { localStorage.removeItem(KEY); } catch {} } }

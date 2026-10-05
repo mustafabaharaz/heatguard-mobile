@@ -11,7 +11,7 @@ const KEY = 'heatguard:preparedness:completed_actions';
 function getStorage() {
   if (Platform.OS !== 'web') {
     try {
-      const { MMKV } = require('react-native-mmkv');
+      const { MMKV } = require('../../lib/mmkvCompat');
       return new MMKV({ id: 'preparedness-storage' });
     } catch {}
   }

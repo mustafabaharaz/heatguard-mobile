@@ -16,7 +16,7 @@ function storageGet(key: string): string | null {
     catch { return null; }
   }
   try {
-    const { MMKV } = require('react-native-mmkv');
+    const { MMKV } = require('../../../lib/mmkvCompat');
     const s = new MMKV();
     return s.getString(key) ?? null;
   } catch { return null; }

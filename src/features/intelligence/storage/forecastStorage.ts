@@ -17,7 +17,7 @@ let nativeStorage: { set(k: string, v: string): void; getString(k: string): stri
 
 if (Platform.OS !== 'web') {
   try {
-    const { MMKV } = require('react-native-mmkv');
+    const { MMKV } = require('../../../lib/mmkvCompat');
     nativeStorage = new MMKV({ id: 'forecast-storage' });
   } catch {
     // MMKV unavailable — will fall through to web path

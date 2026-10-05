@@ -157,7 +157,7 @@ const store = {
     try {
       if (typeof localStorage !== 'undefined') return localStorage.getItem(V_KEY);
       // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const { MMKV } = require('react-native-mmkv');
+      const { MMKV } = require('../../lib/mmkvCompat');
       return new MMKV().getString(V_KEY) ?? null;
     } catch {
       return null;
@@ -170,7 +170,7 @@ const store = {
         return;
       }
       // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const { MMKV } = require('react-native-mmkv');
+      const { MMKV } = require('../../lib/mmkvCompat');
       new MMKV().set(V_KEY, value);
     } catch {}
   },

@@ -14,7 +14,7 @@ const KEY = 'heatguard:medications:selected_categories';
 function getStorage() {
   if (Platform.OS !== 'web') {
     try {
-      const { MMKV } = require('react-native-mmkv');
+      const { MMKV } = require('../../lib/mmkvCompat');
       return new MMKV({ id: 'medication-storage' });
     } catch {}
   }

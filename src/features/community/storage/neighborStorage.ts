@@ -37,7 +37,7 @@ function storageGet(key: string): string | null {
     try { return localStorage.getItem(key); } catch { return null; }
   }
   try {
-    const { MMKV } = require('react-native-mmkv');
+    const { MMKV } = require('../../../lib/mmkvCompat');
     const storage = new MMKV();
     return storage.getString(key) ?? null;
   } catch { return null; }
@@ -49,7 +49,7 @@ function storageSet(key: string, value: string): void {
     return;
   }
   try {
-    const { MMKV } = require('react-native-mmkv');
+    const { MMKV } = require('../../../lib/mmkvCompat');
     const storage = new MMKV();
     storage.set(key, value);
   } catch {}

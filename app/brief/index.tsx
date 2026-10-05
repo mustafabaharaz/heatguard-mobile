@@ -8,6 +8,7 @@ import {
   StyleSheet,
   Dimensions,
 } from 'react-native';
+import Svg, { Circle } from 'react-native-svg';
 import { router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import {
@@ -52,8 +53,8 @@ function ScoreRing({ score, color }: { score: number; color: string }) {
 
   return (
     <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}>
-      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
-        <circle
+      <Svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+        <Circle
           cx={size / 2}
           cy={size / 2}
           r={radius}
@@ -61,7 +62,7 @@ function ScoreRing({ score, color }: { score: number; color: string }) {
           stroke="rgba(255,255,255,0.08)"
           strokeWidth={strokeWidth}
         />
-        <circle
+        <Circle
           cx={size / 2}
           cy={size / 2}
           r={radius}
@@ -71,9 +72,10 @@ function ScoreRing({ score, color }: { score: number; color: string }) {
           strokeDasharray={circumference}
           strokeDashoffset={progress}
           strokeLinecap="round"
-          transform={`rotate(-90 ${size / 2} ${size / 2})`}
+          rotation={-90}
+          origin={`${size / 2}, ${size / 2}`}
         />
-      </svg>
+      </Svg>
       <View style={StyleSheet.absoluteFill as object}>
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
           <Text style={{ fontSize: 42, fontWeight: '700', color: color }}>{score}</Text>
