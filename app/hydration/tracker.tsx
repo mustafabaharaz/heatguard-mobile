@@ -29,6 +29,8 @@ import {
   getWeeklyTotals,
 } from '../../src/features/hydration/hydrationStorage';
 import { getHeatProfile } from '../../src/features/profile/storage/profileStorage';
+import { useWeather } from '../../src/services/weather/useWeather';
+import { getTodayHighF, FALLBACK_TEMP_F } from '../../src/services/weather/weatherStore';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -43,8 +45,6 @@ const COLORS = {
   primary: '#3B82F6',
   success: '#22C55E',
 };
-
-const CURRENT_TEMP_F = 108; // TODO: wire to live weather
 
 // ─── Progress Ring ────────────────────────────────────────────────────────────
 
@@ -168,6 +168,9 @@ function LogItem({ log, onDelete }: { log: HydrationLog; onDelete: () => void })
 // ─── Main Screen ──────────────────────────────────────────────────────────────
 
 export default function HydrationTrackerScreen() {
+  // Daily target is based on today's real forecast high
+  const { snapshot } = useWeather();
+  const CURRENT_TEMP_F = getTodayHighF(snapshot) ?? FALLBACK_TEMP_F;
   const [logs, setLogs] = useState<HydrationLog[]>(() => getHydrationLogs());
   const [customAmount, setCustomAmount] = useState('');
   const [showCustom, setShowCustom] = useState(false);

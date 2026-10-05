@@ -4,6 +4,14 @@
 // heat profile to produce adjusted risk levels and actionable directives.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import type { HeatProfile } from '../profile/storage/profileStorage';
+import {
+  getWeatherSnapshot,
+  getHoursForDate,
+  getUpcomingDateKeys,
+  type WeatherSnapshot,
+} from '../../services/weather/weatherStore';
+
 export type ThermalLevel = 'safe' | 'caution' | 'highAlert' | 'extreme' | 'crisis';
 
 export interface HourlyData {
@@ -39,6 +47,31 @@ export interface ProfileInput {
   threshold?: number;
   conditions?: string[];
   medications?: string[];
+}
+
+/**
+ * Accepts either the real HeatProfile (flat boolean flags, age as string)
+ * or a ProfileInput, and returns a clean ProfileInput.
+ */
+export function normalizeProfile(p: ProfileInput | HeatProfile | null | undefined): ProfileInput {
+  if (!p) return {};
+  if ('hasDiabetes' in p) {
+    const hp = p as HeatProfile;
+    const parsedAge = parseInt(String(hp.age), 10);
+    return {
+      name: hp.name,
+      age: Number.isFinite(parsedAge) ? parsedAge : hp.isElderly ? 65 : undefined,
+      activityLevel: hp.activityLevel === 'medium' ? 'moderate' : hp.activityLevel,
+      threshold: hp.alertThreshold,
+      conditions: [
+        ...(hp.hasHeartDisease ? ['heart disease'] : []),
+        ...(hp.hasDiabetes ? ['diabetes'] : []),
+        ...(hp.hasRespiratoryIssues ? ['respiratory'] : []),
+      ],
+      medications: hp.takesMedications ? ['yes'] : [],
+    };
+  }
+  return p as ProfileInput;
 }
 
 // ── Risk Multiplier ────────────────────────────────────────────────────────
@@ -104,28 +137,26 @@ export function hourToLabel(hour: number, short = false): string {
   return `${hour - 12} PM`;
 }
 
-// ── Hourly generation ──────────────────────────────────────────────────────
+// ── Hourly data (real forecast) ─────────────────────────────────────────
 
 /**
- * Produces a realistic sine-curve temperature for each hour,
- * peaking at 2 PM (14:00).
+ * Builds 5 AM–10 PM hourly rows for one day from real forecast data.
+ * The danger metric is the higher of air temp and feels-like temp, so humid
+ * days are never under-rated; the profile multiplier then shifts it.
  */
-function generateHourly(high: number, low: number, riskMultiplier: number): HourlyData[] {
-  const hours: HourlyData[] = [];
-  for (let h = 5; h <= 22; h++) {
-    // Sine curve: starts rising at 6 AM, peaks at 2 PM, falls to 10 PM
-    const progress = Math.max(0, Math.sin(Math.PI * (h - 6) / 16));
-    const temp = Math.round(low + (high - low) * progress);
-    // Multiplier shifts apparent felt temperature
-    const effectiveTemp = Math.round(temp + (riskMultiplier - 1.0) * 20);
-    hours.push({
-      hour: h,
-      temp,
-      effectiveTemp,
-      level: effectiveToLevel(effectiveTemp),
+function buildHourly(snapshot: WeatherSnapshot, dateKey: string, riskMultiplier: number): HourlyData[] {
+  return getHoursForDate(snapshot, dateKey)
+    .filter(h => h.hour >= 5 && h.hour <= 22)
+    .map(h => {
+      const base = Math.max(h.tempF, h.feelsLikeF);
+      const effectiveTemp = Math.round(base + (riskMultiplier - 1.0) * 20);
+      return {
+        hour: h.hour,
+        temp: Math.round(h.tempF),
+        effectiveTemp,
+        level: effectiveToLevel(effectiveTemp),
+      };
     });
-  }
-  return hours;
 }
 
 // ── Window detection ───────────────────────────────────────────────────────
@@ -223,52 +254,53 @@ function getDateLabel(date: Date): string {
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
-// ── Base forecast data (Phoenix-area realistic summer values) ──────────────
-
-const BASE_DAYS = [
-  { high: 112, low: 88 },
-  { high: 109, low: 86 },
-  { high: 114, low: 90 },
-  { high: 107, low: 85 },
-  { high: 104, low: 84 },
-];
-
 // ── Public API ─────────────────────────────────────────────────────────────
 
 /**
- * Generate a 5-day personalised forecast.
+ * Generate a personalised forecast (up to 5 days) from real weather data.
+ * Returns [] when no weather has loaded yet — callers show a loading state.
  *
- * @param riskMultiplier - From getRiskMultiplierFromProfile(); defaults to 1.0
- * @param profile        - Full profile for tip personalisation
+ * @param riskMultiplier - Profile risk multiplier (1.0 = baseline)
+ * @param profile        - HeatProfile or ProfileInput, for tip personalisation
+ * @param snapshot       - Weather snapshot; defaults to the shared store
  */
 export function generateForecast(
   riskMultiplier: number = 1.0,
-  profile: ProfileInput = {},
+  profile: ProfileInput | HeatProfile = {},
+  snapshot: WeatherSnapshot | null = getWeatherSnapshot(),
 ): DayForecast[] {
-  return BASE_DAYS.map((base, i) => {
-    const date = new Date();
-    date.setDate(date.getDate() + i);
+  if (!snapshot) return [];
+  const input = normalizeProfile(profile);
 
-    const hourly = generateHourly(base.high, base.low, riskMultiplier);
-    const peakLevel = maxLevel(hourly.map(h => h.level));
-    const danger = findDangerWindow(hourly);
-    const safe = findSafeWindow(hourly);
+  return getUpcomingDateKeys(snapshot, 5)
+    .map((dateKey, i): DayForecast | null => {
+      const daily = snapshot.daily.find(d => d.dateKey === dateKey);
+      const hourly = buildHourly(snapshot, dateKey, riskMultiplier);
+      if (!daily || hourly.length === 0) return null;
 
-    return {
-      index: i,
-      date,
-      dayLabel: getDayLabel(i, date),
-      dateLabel: getDateLabel(date),
-      highTemp: base.high,
-      lowTemp: base.low,
-      peakLevel,
-      hourly,
-      dangerStart: danger?.start ?? null,
-      dangerEnd: danger?.end ?? null,
-      safeStart: safe?.start ?? null,
-      safeEnd: safe?.end ?? null,
-      directive: buildDirective(danger, safe, peakLevel),
-      personalizedTip: buildPersonalizedTip(peakLevel, profile),
-    };
-  });
+      const [y, m, d] = dateKey.split('-').map(Number);
+      const date = new Date(y, m - 1, d);
+      const peakLevel = maxLevel(hourly.map(h => h.level));
+      const danger = findDangerWindow(hourly);
+      const safe = findSafeWindow(hourly);
+
+      return {
+        index: i,
+        date,
+        dayLabel: getDayLabel(i, date),
+        dateLabel: getDateLabel(date),
+        highTemp: Math.round(daily.highF),
+        lowTemp: Math.round(daily.lowF),
+        peakLevel,
+        hourly,
+        dangerStart: danger?.start ?? null,
+        dangerEnd: danger?.end ?? null,
+        safeStart: safe?.start ?? null,
+        safeEnd: safe?.end ?? null,
+        directive: buildDirective(danger, safe, peakLevel),
+        personalizedTip: buildPersonalizedTip(peakLevel, input),
+      };
+    })
+    .filter((d): d is DayForecast => d !== null)
+    .map((d, i) => ({ ...d, index: i }));
 }

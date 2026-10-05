@@ -32,6 +32,7 @@ import {
 } from '../../src/features/preparedness/preparednessStorage';
 import { getHeatProfile } from '../../src/features/profile/storage/profileStorage';
 import { generateForecast } from '../../src/features/intelligence/forecastEngine';
+import { useWeather } from '../../src/services/weather/useWeather';
 
 // ── Design tokens ─────────────────────────────────────────────────────────────
 
@@ -212,6 +213,7 @@ const dp = StyleSheet.create({
 
 export default function PreparednessScreen() {
   const router = useRouter();
+  const { snapshot } = useWeather();
 
   const profile  = getHeatProfile();
   // Bridge HeatProfile → ProfileInput for forecastEngine
@@ -229,7 +231,7 @@ export default function PreparednessScreen() {
     takesMedications: profile.takesMedications,
   };
 
-  const forecast = generateForecast(getRiskMultiplier(heatProfile), heatProfile);
+  const forecast = generateForecast(getRiskMultiplier(profile), profile, snapshot);
   const plan     = generatePreparednessPlan(forecast, profile);
 
   const [completedIds, setCompleted] = useState<string[]>(getCompletedActions());

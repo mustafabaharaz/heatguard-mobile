@@ -6,6 +6,12 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { ThermalLevel } from './forecastEngine';
+import {
+  getWeatherSnapshot,
+  getHoursForDate,
+  getUpcomingDateKeys,
+  type WeatherSnapshot,
+} from '../../services/weather/weatherStore';
 
 // ── Activity definitions ───────────────────────────────────────────────────
 
@@ -58,23 +64,24 @@ export interface ActivityWindow {
   breaksNeeded: number;  // number of shade breaks
 }
 
-// ── Temperature model (mirrors forecastEngine sine curve) ─────────────────
-
-/** Base hi/lo per day — same values as forecastEngine.BASE_DAYS */
-const BASE_DAYS = [
-  { high: 112, low: 88 },  // today
-  { high: 109, low: 86 },  // tomorrow
-];
+// ── Temperature model (real hourly forecast) ──────────────────────────────
 
 /**
- * Base temperature at a fractional hour using a sine curve that
- * peaks at 14:00 (2 PM), matching the forecastEngine model exactly.
+ * Danger temperature (°F) at a fractional local hour, linearly interpolated
+ * between real forecast hours. Uses max(air, feels-like) like forecastEngine.
+ * Returns null if that hour isn't in the forecast.
  */
-function tempAtHour(dayIndex: number, hour: number, minute: number): number {
-  const { high, low } = BASE_DAYS[dayIndex];
-  const t = hour + minute / 60;
-  const progress = Math.max(0, Math.sin(Math.PI * (t - 6) / 16));
-  return low + (high - low) * progress;
+function tempAtHour(snapshot: WeatherSnapshot, dateKey: string, hour: number, minute: number): number | null {
+  const hours = getHoursForDate(snapshot, dateKey);
+  const valueAt = (h: number) => {
+    const p = hours.find(x => x.hour === h);
+    return p ? Math.max(p.tempF, p.feelsLikeF) : null;
+  };
+  const a = valueAt(hour);
+  if (a === null) return null;
+  if (minute === 0) return a;
+  const b = valueAt(hour + 1);
+  return b === null ? a : a + (b - a) * (minute / 60);
 }
 
 // ── Thermal thresholds (mirrors forecastEngine) ────────────────────────────
@@ -121,13 +128,14 @@ function buildReason(
  * produce a representative peak and average effective temperature.
  */
 function scoreWindow(
-  dayIndex: number,
+  snapshot: WeatherSnapshot,
+  dateKey: string,
   startHour: number,
   startMin: number,
   durationMin: DurationMin,
   riskMultiplier: number,
   activity: ActivityDefinition,
-): Pick<ActivityWindow, 'peakEffectiveTemp' | 'avgEffectiveTemp' | 'thermalLevel'> {
+): Pick<ActivityWindow, 'peakEffectiveTemp' | 'avgEffectiveTemp' | 'thermalLevel'> | null {
   const samples: number[] = [];
   const steps = Math.max(2, durationMin / 15);
 
@@ -135,7 +143,8 @@ function scoreWindow(
     const totalMin = startHour * 60 + startMin + (durationMin / steps) * i;
     const h = Math.floor(totalMin / 60);
     const m = totalMin % 60;
-    const base = tempAtHour(dayIndex, h, m);
+    const base = tempAtHour(snapshot, dateKey, h, m);
+    if (base === null) return null;
     // Effective temp = base adjusted by profile risk + activity intensity
     const effective = base + (riskMultiplier - 1.0) * 20 + (activity.intensityMultiplier - 1.0) * 12;
     samples.push(effective);
@@ -164,25 +173,34 @@ export function planActivity(
   activityId: ActivityType,
   durationMin: DurationMin,
   riskMultiplier: number,
+  snapshot: WeatherSnapshot | null = getWeatherSnapshot(),
 ): ActivityWindow[] {
+  if (!snapshot) return [];
   const activity  = ACTIVITIES.find(a => a.id === activityId)!;
   const windows: ActivityWindow[] = [];
+  const dateKeys = getUpcomingDateKeys(snapshot, 2);
+  const now = new Date();
+  const nowMin = now.getHours() * 60 + now.getMinutes();
 
-  for (let dayIndex = 0; dayIndex <= 1; dayIndex++) {
+  for (let dayIndex = 0; dayIndex < dateKeys.length; dayIndex++) {
     const dayLabel = dayIndex === 0 ? 'Today' : 'Tomorrow';
+    const dateKey = dateKeys[dayIndex];
 
     // Slots: every 30 min from 5:00 AM, last start must end by 22:00 (10 PM)
     for (let slot = 0; slot < 34; slot++) {
       const totalStartMin = 5 * 60 + slot * 30;
       const totalEndMin   = totalStartMin + durationMin;
       if (totalEndMin > 22 * 60) break;
+      // Skip windows today that have already started
+      if (dayIndex === 0 && totalStartMin < nowMin) continue;
 
       const startHour = Math.floor(totalStartMin / 60);
       const startMin  = totalStartMin % 60;
       const endHour   = Math.floor(totalEndMin / 60);
       const endMin    = totalEndMin % 60;
 
-      const score = scoreWindow(dayIndex, startHour, startMin, durationMin, riskMultiplier, activity);
+      const score = scoreWindow(snapshot, dateKey, startHour, startMin, durationMin, riskMultiplier, activity);
+      if (!score) continue;
       const verdict = verdictFromLevel(score.thermalLevel);
 
       const waterNeeded = Math.round((activity.waterOzPerHour * durationMin) / 60);

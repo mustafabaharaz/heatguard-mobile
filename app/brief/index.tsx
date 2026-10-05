@@ -22,7 +22,9 @@ import {
   getHeatProfile,
   type HeatProfile,
 } from '../../src/features/profile/storage/profileStorage';
-import { getAcclimationState, getAcclimationScore } from '../../src/features/acclimation/acclimationEngine';
+import { getAcclimationScore } from '../../src/features/acclimation/acclimationEngine';
+import { useWeather } from '../../src/services/weather/useWeather';
+import { getTodayHighF } from '../../src/services/weather/weatherStore';
 import { getAcclimationState as loadAcclimationState } from '../../src/features/acclimation/acclimationStorage';
 import { calculateHydrationTarget, computeHydrationSummary, mlToOz } from '../../src/features/hydration/hydrationEngine';
 import { getHydrationLogs } from '../../src/features/hydration/hydrationStorage';
@@ -134,6 +136,7 @@ export default function DailyBriefScreen() {
   const [brief, setBrief] = useState<DailyBrief | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const { snapshot, error: weatherError } = useWeather();
 
   const buildBrief = useCallback(async (force = false) => {
     // Try cache first (unless forcing refresh)
@@ -157,13 +160,19 @@ export default function DailyBriefScreen() {
     const acclimationScore = getAcclimationScore(acclimationRaw.completedDays.length);
     const acclimationDay = acclimationRaw.isActive ? acclimationRaw.currentDay : null;
 
-    const forecastHighF = 108; // TODO: wire to forecastEngine
+    const forecastHighF = getTodayHighF(snapshot);
+    if (forecastHighF === null) {
+      // No real weather yet — don't build a brief from made-up numbers
+      setLoading(!weatherError);
+      setRefreshing(false);
+      return;
+    }
     const hydrationTarget = calculateHydrationTarget(profile, forecastHighF);
     const logs = getHydrationLogs();
     const hydrationSummary = computeHydrationSummary(hydrationTarget, logs);
 
     const result = generateDailyBrief({
-      age: Number(profile.age),
+      profile,
       forecastHighF,
       hydrationTargetOz: mlToOz(hydrationTarget.dailyTargetMl),
       hydrationPercentComplete: hydrationSummary.percentComplete,
@@ -176,7 +185,7 @@ export default function DailyBriefScreen() {
     setBrief(result);
     setLoading(false);
     setRefreshing(false);
-  }, []);
+  }, [snapshot, weatherError]);
 
   useEffect(() => { buildBrief(); }, [buildBrief]);
 

@@ -5,7 +5,7 @@
 // HeatProfile subset
 interface ProfileInput {
   age: number | string;
-  activityLevel: 'sedentary' | 'light' | 'moderate' | 'active' | 'athlete';
+  activityLevel: string;  // engine levels or HeatProfile's low / medium / high
   conditions?: string[];
   weight?: number; // kg — optional, defaults to 70
 }
@@ -64,6 +64,10 @@ export function calculateHydrationTarget(
     moderate: 700,
     active: 1000,
     athlete: 1400,
+    // HeatProfile levels
+    low: 0,
+    medium: 350,
+    high: 1000,
   };
   const activityBonusMl = activityBonusMap[profile.activityLevel] ?? 350;
 

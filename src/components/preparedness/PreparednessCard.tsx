@@ -12,6 +12,7 @@ import { generatePreparednessPlan, getSeverityColor } from '../../features/prepa
 import { getCompletedActions } from '../../features/preparedness/preparednessStorage';
 import { getHeatProfile } from '../../features/profile/storage/profileStorage';
 import { generateForecast } from '../../features/intelligence/forecastEngine';
+import { useWeather } from '../../services/weather/useWeather';
 import { getRiskMultiplier } from '../../features/profile/storage/profileStorage';
 
 const C = {
@@ -23,6 +24,7 @@ const C = {
 };
 
 export default function PreparednessCard() {
+  const { snapshot } = useWeather();
   const plan = useMemo(() => {
     const profile = getHeatProfile();
     const profileInput = {
@@ -38,9 +40,9 @@ export default function PreparednessCard() {
       ].filter(Boolean) as string[],
       takesMedications: profile.takesMedications,
     };
-    const forecast = generateForecast(getRiskMultiplier(profile), profile);
+    const forecast = generateForecast(getRiskMultiplier(profile), profile, snapshot);
     return generatePreparednessPlan(forecast, profile);
-  }, []);
+  }, [snapshot]);
 
   const completedIds  = getCompletedActions();
   const totalActions  = plan.actions.length;

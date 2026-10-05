@@ -23,7 +23,7 @@ export interface AcclimationProgram {
 
 // HeatProfile subset needed for personalization
 interface ProfileInput {
-  age: number;
+  age: number | string;   // HeatProfile stores age as a string
   activityLevel: string;
   // boolean flags (real HeatProfile shape)
   isElderly?: boolean;
@@ -226,9 +226,10 @@ function getPersonalizationFactor(profile: ProfileInput): number {
   let factor = 1.0;
 
   // Age-based reduction
-  if (profile.age > 65) factor *= 0.7;
-  else if (profile.age > 55) factor *= 0.82;
-  else if (profile.age > 45) factor *= 0.92;
+  const age = Number(profile.age) || 35;
+  if (age > 65) factor *= 0.7;
+  else if (age > 55) factor *= 0.82;
+  else if (age > 45) factor *= 0.92;
 
   // Condition-based reduction — support both boolean fields and array
   const cond = profile.conditions ?? [];

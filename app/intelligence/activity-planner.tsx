@@ -29,6 +29,7 @@ import {
   formatWindowRange,
   getNowSlot,
 } from '../../src/features/intelligence/activityPlannerEngine';
+import { useWeather } from '../../src/services/weather/useWeather';
 import { getHeatProfile, getRiskMultiplier } from '../../src/features/profile/storage/profileStorage';
 
 // ── Design tokens ──────────────────────────────────────────────────────────
@@ -199,9 +200,10 @@ export default function ActivityPlannerScreen() {
   const nowSlot = getNowSlot();
 
   // ── Plan ────────────────────────────────────────────────────────────────
+  const { snapshot } = useWeather();
   const windows = useMemo(
-    () => planActivity(activityId, duration, multiplier),
-    [activityId, duration, multiplier],
+    () => planActivity(activityId, duration, multiplier, snapshot),
+    [activityId, duration, multiplier, snapshot],
   );
 
   const groups = useMemo(() => ({

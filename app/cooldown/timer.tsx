@@ -21,6 +21,8 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { useWeather } from '../../src/services/weather/useWeather';
+import { fToC, FALLBACK_TEMP_F } from '../../src/services/weather/weatherStore';
 
 // ── Design tokens (inline, matching project pattern) ─────────────────────────
 
@@ -173,16 +175,12 @@ function TimerRing({
 
 // ── Main screen ───────────────────────────────────────────────────────────────
 
-interface Props {
-  // tempC passed via route params or defaults to 38 (demo mode)
-}
-
 export default function CooldownTimerScreen() {
   const router = useRouter();
 
-  // In production, receive tempC from route params or global store
-  // For now default to 38°C (high alert) as a realistic demo value
-  const [tempC] = useState(38);
+  // Live feels-like temperature from the shared weather store
+  const { feelsLikeF } = useWeather();
+  const tempC = Math.round(fToC(feelsLikeF ?? FALLBACK_TEMP_F));
 
   const presets = getPresets(tempC);
   const tips    = getCooldownTips(tempC);
@@ -320,7 +318,7 @@ export default function CooldownTimerScreen() {
                       styles.ringTime,
                       { color: isActive ? COLORS.cool : COLORS.textTer },
                     ]}>
-                      {isActive || timerState === 'paused'
+                      {isActive
                         ? formatTime(remainingSeconds)
                         : '--:--'}
                     </Text>

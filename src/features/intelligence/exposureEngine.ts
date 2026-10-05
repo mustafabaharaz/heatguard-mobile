@@ -5,6 +5,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { ThermalLevel } from './forecastEngine';
+import { getWeatherSnapshot } from '../../services/weather/weatherStore';
 
 // ── External dependency shape (matches existing checkInStorage) ────────────
 
@@ -80,28 +81,26 @@ export interface ExposureAnalytics {
   insight: string;              // human-readable summary sentence
 }
 
-// ── Temperature model (mirrors forecastEngine / activityPlannerEngine) ─────
-
-const BASE_HIGH = 112;
-const BASE_LOW  = 88;
+// ── Temperature lookup (real recorded weather) ─────────────────────────────
 
 /**
- * Estimated base temperature for a given Date, using the same sine model.
- * For historical days we use the same Phoenix-area hi/lo as a baseline
- * (slight variation seeded from day-of-year to feel realistic).
+ * Real temperature (°F, max of air and feels-like) at the given moment, taken
+ * from the nearest hour in the weather snapshot (which covers the past 14 days).
+ * Returns 85°F — scored as minimal exposure — when no weather data is available,
+ * so missing data never inflates or invents risk.
  */
 function estimateTempAt(date: Date): number {
-  const hour     = date.getHours() + date.getMinutes() / 60;
-  const dayOfYear = Math.floor((date.getTime() - new Date(date.getFullYear(), 0, 0).getTime()) / 86400000);
-
-  // Gentle variation: ±5°F across the week
-  const highVariation = Math.sin(dayOfYear * 0.7) * 5;
-  const lowVariation  = Math.sin(dayOfYear * 0.5) * 3;
-  const high = BASE_HIGH + highVariation;
-  const low  = BASE_LOW  + lowVariation;
-
-  const progress = Math.max(0, Math.sin(Math.PI * (hour - 6) / 16));
-  return Math.round(low + (high - low) * progress);
+  const snapshot = getWeatherSnapshot();
+  if (!snapshot) return 85;
+  const t = date.getTime();
+  let best: { diff: number; value: number } | null = null;
+  for (const h of snapshot.hourly) {
+    const diff = Math.abs(h.time - t);
+    if (diff <= 45 * 60 * 1000 && (!best || diff < best.diff)) {
+      best = { diff, value: Math.max(h.tempF, h.feelsLikeF) };
+    }
+  }
+  return best ? Math.round(best.value) : 85;
 }
 
 // ── Scoring ────────────────────────────────────────────────────────────────
@@ -157,34 +156,6 @@ function dateFullLabel(d: Date): string {
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
-// ── Seed historical check-ins (fills gaps in real data for demo) ───────────
-
-/**
- * Generates plausible seeded check-ins for the past 14 days so the
- * analytics screen always has something meaningful to display, even
- * on a fresh install. Real user check-ins override the seeded days.
- */
-function generateSeedCheckIns(): CheckInRecord[] {
-  const records: CheckInRecord[] = [];
-  const now = Date.now();
-
-  for (let d = 13; d >= 0; d--) {
-    // 0–3 check-ins per day, more on recent days
-    const count = d < 5
-      ? Math.floor(Math.random() * 3) + 1
-      : Math.floor(Math.random() * 2);
-
-    for (let c = 0; c < count; c++) {
-      // Random hour weighted toward midday
-      const hour  = 6 + Math.floor(Math.random() * 14);
-      const min   = Math.floor(Math.random() * 60);
-      const msAgo = d * 86400000 + (23 - hour) * 3600000 + (59 - min) * 60000;
-      records.push({ timestamp: new Date(now - msAgo) });
-    }
-  }
-  return records;
-}
-
 // ── Core analytics builder ─────────────────────────────────────────────────
 
 export function buildExposureAnalytics(
@@ -194,9 +165,8 @@ export function buildExposureAnalytics(
   const now  = new Date();
   const today = startOfDay(now);
 
-  // Merge real check-ins with seed data (seed only fills days with no real data)
-  const seeded = generateSeedCheckIns();
-  const allRaw = rawCheckIns.length >= 3 ? rawCheckIns : [...rawCheckIns, ...seeded];
+  // Only the user's real check-ins — no seeded demo data
+  const allRaw = rawCheckIns;
 
   // ── Score every check-in ───────────────────────────────────────────────
 

@@ -41,6 +41,7 @@ import {
   getLastViewedDay,
 } from '../../src/features/intelligence/storage/forecastStorage';
 import { getHeatProfile, getRiskMultiplier } from '../../src/features/profile/storage/profileStorage';
+import { useWeather } from '../../src/services/weather/useWeather';
 
 // ── Design tokens ──────────────────────────────────────────────────────────
 
@@ -232,6 +233,7 @@ export default function ForecastScreen() {
   const [loading,      setLoading]      = useState(true);
 
   const nowHour = new Date().getHours();
+  const { snapshot } = useWeather();
 
   // ── Load profile → generate forecast ────────────────────────────────────
   useEffect(() => {
@@ -254,13 +256,13 @@ export default function ForecastScreen() {
     const multiplier = getRiskMultiplier(raw);
     if (profile.name) setProfileName(profile.name);
 
-    const days = generateForecast(multiplier, profile);
+    const days = generateForecast(multiplier, profile, snapshot);
     setForecast(days);
 
     const last = getLastViewedDay();
     setSelectedDay(last < days.length ? last : 0);
     setLoading(false);
-  }, []);
+  }, [snapshot]);
 
   const selectDay = useCallback((i: number) => {
     setSelectedDay(i);

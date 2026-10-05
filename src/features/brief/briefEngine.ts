@@ -5,7 +5,7 @@
 // Matches the actual HeatProfile boolean-field shape from profileStorage
 interface ProfileInput {
   name: string;
-  age: number;
+  age: number | string;   // HeatProfile stores age as a string
   activityLevel: string;
   // boolean condition flags (real HeatProfile shape)
   isElderly?: boolean;
@@ -54,7 +54,7 @@ export interface BriefInput {
 function computeRiskMultiplier(profile: ProfileInput): number {
   let multiplier = 1.0;
 
-  const age = profile.age ?? 35;
+  const age = Number(profile.age) || 35;
   if (age > 70) multiplier *= 1.6;
   else if (age > 65) multiplier *= 1.4;
   else if (age > 55) multiplier *= 1.2;
@@ -130,7 +130,7 @@ function buildPersonalNote(profile: ProfileInput, multiplier: number, acclimatio
   const cond = profile.conditions ?? [];
   if (profile.hasHeartDisease || cond.includes('heart_disease'))
     return 'Your heart condition significantly amplifies heat strain. Take extra precautions.';
-  if ((profile.age ?? 0) > 70)
+  if ((Number(profile.age) || 0) > 70)
     return 'Adults over 70 are at the highest risk in extreme heat. Stay cool and hydrated.';
   if (profile.hasDiabetes || cond.includes('diabetes'))
     return "Diabetes affects your body's cooling response. Monitor yourself closely.";
@@ -160,7 +160,7 @@ function buildRecommendations(params: {
   if (forecastHighF >= 110) recs.push('Stay indoors between 10 AM and 5 PM without exception');
   else if (forecastHighF >= 100) recs.push('Stay indoors between 11 AM and 4 PM');
 
-  const isVulnerable = (profile.age ?? 0) > 65 || profile.isElderly ||
+  const isVulnerable = (Number(profile.age) || 0) > 65 || profile.isElderly ||
     profile.hasHeartDisease || profile.hasDiabetes || cond.length > 0;
   if (forecastHighF >= 105 && isVulnerable) recs.push('Check on elderly or vulnerable neighbors today');
 

@@ -10,8 +10,8 @@ import { AlertCircle, Thermometer, RefreshCw, MapPin, User, TrendingUp, ShieldAl
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter, useFocusEffect } from 'expo-router';
 import EmergencySOSModal from '../../src/components/emergency/EmergencySOSModal';
-import { getCurrentWeather, WeatherData } from '../../src/services/api/weatherApi';
-import { useLocation } from '../../src/lib/hooks/useLocation';
+import { useWeather } from '../../src/services/weather/useWeather';
+import { refreshWeather, fToC, getTodayHighF, snapshotAgeMinutes } from '../../src/services/weather/weatherStore';
 import { scheduleHeatAlert } from '../../src/services/notifications/push';
 import { getHeatProfile, getRiskMultiplier, HeatProfile } from '../../src/features/profile/storage/profileStorage';
 import ExposureSessionCard from '../../src/components/exposure/ExposureSessionCard';
@@ -260,8 +260,6 @@ export default function HomeScreen() {
   const { formatTemp } = useSettings();
   const [refreshing, setRefreshing] = useState(false);
   const [showEmergencyModal, setShowEmergencyModal] = useState(false);
-  const [weather, setWeather] = useState<WeatherData | null>(null);
-  const [loading, setLoading] = useState(true);
   const [heatProfile, setHeatProfile] = useState<HeatProfile>(getHeatProfile());
   const lastAlertTemp = useRef<number>(0);
 
@@ -271,105 +269,107 @@ export default function HomeScreen() {
   const [acclimState, setAcclimState] = useState<AcclimationState>(loadAcclimationState());
   const [vehicleSession, setVehicleSession] = useState<VehicleSession | null>(null);
 
-  const { location, error: locationError } = useLocation();
+  // ── Live weather (Open-Meteo, shared store) ────────────────────────────────
+  const { snapshot, loading: weatherLoading, error: weatherError } = useWeather();
+  const todayHighF = getTodayHighF(snapshot);
 
   useFocusEffect(useCallback(() => {
     const profile = getHeatProfile();
     setHeatProfile(profile);
+    setAcclimState(loadAcclimationState());
+    setVehicleSession(getActiveVehicleSession());
 
-    // ── Phase 6 data loading ─────────────────────────────────────────────────
-    const tempF = weather ? (weather.temperature * 9 / 5) + 32 : 108;
+    // Everything below needs real weather — never build it from made-up numbers
+    if (todayHighF === null) return;
 
-    // Daily brief — use cache if today's, else regenerate
+    // Daily brief — use cache if today's, else regenerate from today's real high
     const cachedBrief = getCachedBrief();
     if (cachedBrief) {
       setDailyBrief(cachedBrief);
     } else if (profile?.profileComplete) {
       const acclimRaw = loadAcclimationState();
-      const hydTarget = calculateHydrationTarget(profile, tempF);
+      const hydTarget = calculateHydrationTarget(profile, todayHighF);
       const hydSummary = computeHydrationSummary(hydTarget, getHydrationLogs());
       const brief = generateDailyBrief({
         profile,
-        forecastHighF: tempF,
+        forecastHighF: todayHighF,
         hydrationTargetOz: mlToOz(hydTarget.dailyTargetMl),
         hydrationPercentComplete: hydSummary.percentComplete,
         acclimationDay: acclimRaw.isActive ? acclimRaw.currentDay : null,
         acclimationScore: getAcclimationScore(acclimRaw.completedDays.length),
-        medicationWarnings: profile.medications?.length ?? 0,
+        medicationWarnings: profile.takesMedications ? 1 : 0,
       });
       cacheBrief(brief);
       setDailyBrief(brief);
     }
 
-    // Hydration summary
-    if (profile) {
-      const hydTarget = calculateHydrationTarget(profile, tempF);
-      setHydrationSummary(computeHydrationSummary(hydTarget, getHydrationLogs()));
-    }
+    // Hydration summary — daily target based on today's real high
+    const hydTarget = calculateHydrationTarget(profile, todayHighF);
+    setHydrationSummary(computeHydrationSummary(hydTarget, getHydrationLogs()));
+  }, [todayHighF]));
 
-    // Acclimation + vehicle session
-    setAcclimState(loadAcclimationState());
-    setVehicleSession(getActiveVehicleSession());
-  }, [weather]));
-
-  const fetchWeather = useCallback(async () => {
-    if (!location) return;
-    try {
-      const data = await getCurrentWeather(location.lat, location.lon);
-      setWeather(data);
-      const temp = data.temperature;
-      const tempF = (temp * 9 / 5) + 32;
-      if (PassiveTracker.getState().isTracking) {
-        await PassiveTracker.updateTemperature(tempF);
-      }
-      const threshold = heatProfile.alertThreshold ?? 35;
-      if (temp >= threshold && temp !== lastAlertTemp.current) {
-        const riskLevel = temp >= 40 ? 'critical' : temp >= 35 ? 'high' : 'caution';
-        await scheduleHeatAlert(temp, riskLevel);
-        lastAlertTemp.current = temp;
-      }
-    } catch (error) {
-      console.error('Failed to fetch weather:', error);
-    } finally {
-      setLoading(false);
-    }
-  }, [location, heatProfile.alertThreshold]);
-
+  // React to each new weather reading: exposure tracker + heat alerts
   useEffect(() => {
-    fetchWeather();
-    const interval = setInterval(fetchWeather, 5 * 60 * 1000);
-    return () => clearInterval(interval);
-  }, [fetchWeather]);
+    if (!snapshot) return;
+    const tempF = snapshot.current.tempF;
+    const feelsC = fToC(snapshot.current.feelsLikeF);
+    if (PassiveTracker.getState().isTracking) {
+      Promise.resolve(PassiveTracker.updateTemperature(tempF)).catch(() => {});
+    }
+    const threshold = heatProfile.alertThreshold ?? 35;
+    const rounded = Math.round(feelsC);
+    if (rounded >= threshold && rounded !== lastAlertTemp.current) {
+      const riskLevel = rounded >= 40 ? 'critical' : rounded >= 35 ? 'high' : 'caution';
+      Promise.resolve(scheduleHeatAlert(rounded, riskLevel)).catch(() => {});
+      lastAlertTemp.current = rounded;
+    }
+  }, [snapshot?.fetchedAt, heatProfile.alertThreshold]);
 
-  const temperature = weather?.temperature || 38;
-  const heatIndex = weather?.feelsLike || 42;
-  const locationName = weather?.location || 'Your Location';
-  const temperatureF = (temperature * 9 / 5) + 32;
+  // Refresh every 15 minutes while Home is mounted
+  useEffect(() => {
+    const id = setInterval(() => { refreshWeather(true); }, 15 * 60 * 1000);
+    return () => clearInterval(id);
+  }, []);
 
+  // Values below are only used once a snapshot exists (see early returns)
+  const temperature = snapshot ? Math.round(fToC(snapshot.current.tempF)) : 0;   // °C
+  const heatIndex = snapshot ? Math.round(fToC(snapshot.current.feelsLikeF)) : 0; // °C
+  const locationName = snapshot?.locationName ?? 'Your Location';
+  const temperatureF = snapshot ? Math.round(snapshot.current.tempF) : 0;
+  const weatherDescription = snapshot?.current.description;
+
+  const updatedLabel = (() => {
+    if (!snapshot) return '';
+    const mins = snapshotAgeMinutes(snapshot);
+    const when = mins < 2 ? 'just now' : mins < 60 ? `${mins} min ago` : mins < 1440 ? `${Math.round(mins / 60)} hr ago` : `${Math.round(mins / 1440)} days ago`;
+    return `Updated ${when}${weatherError ? ' · offline' : ''}`;
+  })();
+
+  // Risk level follows the feels-like temperature (what the body experiences)
   const getRiskColor = () => {
-    if (temperature >= 40) return COLORS.lava;
-    if (temperature >= 35) return COLORS.ember;
-    if (temperature >= 30) return COLORS.desert;
+    if (heatIndex >= 40) return COLORS.lava;
+    if (heatIndex >= 35) return COLORS.ember;
+    if (heatIndex >= 30) return COLORS.desert;
     return COLORS.glacier;
   };
 
   const getRiskText = () => {
-    if (temperature >= 40) return 'CRITICAL';
-    if (temperature >= 35) return 'HIGH RISK';
-    if (temperature >= 30) return 'CAUTION';
+    if (heatIndex >= 40) return 'CRITICAL';
+    if (heatIndex >= 35) return 'HIGH RISK';
+    if (heatIndex >= 30) return 'CAUTION';
     return 'NORMAL';
   };
 
   const getAdviceText = () => {
-    if (temperature >= 40) return 'EXTREME DANGER: Heat stroke highly likely. Seek immediate shelter and hydration.';
-    if (temperature >= 35) return 'HIGH RISK: Heat exhaustion likely. Limit outdoor activity and stay hydrated.';
-    if (temperature >= 30) return 'CAUTION: Possible fatigue with prolonged exposure. Take regular breaks.';
+    if (heatIndex >= 40) return 'EXTREME DANGER: Heat stroke highly likely. Seek immediate shelter and hydration.';
+    if (heatIndex >= 35) return 'HIGH RISK: Heat exhaustion likely. Limit outdoor activity and stay hydrated.';
+    if (heatIndex >= 30) return 'CAUTION: Possible fatigue with prolonged exposure. Take regular breaks.';
     return 'SAFE: Current conditions are comfortable. Stay aware of weather changes.';
   };
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await fetchWeather();
+    await refreshWeather(true);
     setRefreshing(false);
   };
 
@@ -388,11 +388,42 @@ export default function HomeScreen() {
     Alert.alert('Location Shared', 'Your GPS coordinates have been sent.', [{ text: 'OK', onPress: () => setShowEmergencyModal(false) }]);
   };
 
-  if (loading) {
+  // No weather has ever loaded yet
+  if (!snapshot) {
+    if (!weatherError || weatherLoading) {
+      return (
+        <View style={[styles.container, styles.centered]}>
+          <ActivityIndicator size="large" color={COLORS.ocean} />
+          <Text style={styles.loadingText}>Getting your local conditions...</Text>
+        </View>
+      );
+    }
     return (
-      <View style={[styles.container, styles.centered]}>
-        <ActivityIndicator size="large" color={COLORS.ocean} />
-        <Text style={styles.loadingText}>Getting your location...</Text>
+      <View style={[styles.container, styles.centered, { padding: 24 }]}>
+        <Text style={styles.noWeatherTitle}>Weather unavailable</Text>
+        <Text style={styles.noWeatherText}>
+          HeatGuard couldn't load your local conditions. Check your connection and try again.
+          Emergency tools still work.
+        </Text>
+        <TouchableOpacity style={styles.retryBtn} onPress={() => refreshWeather(true)} activeOpacity={0.8}>
+          <Text style={styles.retryBtnText}>Try again</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={() => router.push('/offline/emergency-card')}
+          style={[styles.offlineCardBtn, { alignSelf: 'stretch' }]}
+          activeOpacity={0.8}
+        >
+          <Text style={styles.offlineCardBtnText}>⚡ Emergency Info Card</Text>
+          <Text style={styles.offlineCardBtnSub}>Works offline · Symptoms · Shelters · Contacts</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={handleCallEmergency}
+          style={[styles.sosButton, { alignSelf: 'stretch' }]}
+          activeOpacity={0.8}
+        >
+          <Text style={styles.sosButtonText}>🆘 CALL 911</Text>
+          <Text style={styles.sosButtonSubtext}>Tap if you need immediate help</Text>
+        </TouchableOpacity>
       </View>
     );
   }
@@ -415,6 +446,7 @@ export default function HomeScreen() {
             <MapPin size={16} color="#6B7280" />
             <Text style={styles.subtitle}>{locationName}</Text>
           </View>
+          <Text style={styles.updatedText}>{updatedLabel}</Text>
         </View>
 
         {/* ── Temperature Card ─────────────────────────────────────────────── */}
@@ -422,8 +454,8 @@ export default function HomeScreen() {
           <Thermometer size={48} color={COLORS.ocean} strokeWidth={2} />
           <Text style={styles.tempLarge}>{formatTemp(temperature, false)}</Text>
           <Text style={styles.tempSubtext}>Feels like {formatTemp(heatIndex)}</Text>
-          {weather?.description && (
-            <Text style={styles.weatherDesc}>{weather.description}</Text>
+          {weatherDescription && (
+            <Text style={styles.weatherDesc}>{weatherDescription}</Text>
           )}
           <View style={styles.riskBadge}>
             <Text style={styles.riskText}>{getRiskText()}</Text>
@@ -527,6 +559,11 @@ const styles = StyleSheet.create({
   subtitle: { fontSize: 16, color: '#6B7280', marginLeft: 4 },
 
   tempCard: { borderRadius: 24, padding: 32, marginBottom: 24, alignItems: 'center' },
+  updatedText: { fontSize: 12, color: '#6B7280', marginTop: 4 },
+  noWeatherTitle: { fontSize: 22, fontWeight: '700', color: '#1D3557', marginBottom: 8, textAlign: 'center' },
+  noWeatherText: { fontSize: 15, color: '#4B5563', textAlign: 'center', lineHeight: 22, marginBottom: 20 },
+  retryBtn: { backgroundColor: '#1D3557', paddingVertical: 14, paddingHorizontal: 32, borderRadius: 12, marginBottom: 24, minHeight: 48, justifyContent: 'center' },
+  retryBtnText: { color: '#FFFFFF', fontSize: 16, fontWeight: '600' },
   tempLarge: { fontSize: 72, fontWeight: 'bold', color: COLORS.ocean, marginTop: 16 },
   tempSubtext: { fontSize: 20, color: COLORS.ocean, opacity: 0.8, marginTop: 8 },
   weatherDesc: { fontSize: 16, color: COLORS.ocean, opacity: 0.7, marginTop: 4, textTransform: 'capitalize' },

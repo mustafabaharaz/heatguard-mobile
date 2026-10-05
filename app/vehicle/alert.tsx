@@ -19,6 +19,8 @@ import {
   type VehicleOccupant,
   type VehicleSession,
 } from '../../src/features/vehicle/vehicleAlertEngine';
+import { useWeather } from '../../src/services/weather/useWeather';
+import { FALLBACK_TEMP_F } from '../../src/services/weather/weatherStore';
 
 const COLORS = {
   background: '#0A1628',
@@ -32,8 +34,6 @@ const COLORS = {
   success: '#22C55E',
   error: '#EF4444',
 };
-
-const CURRENT_TEMP_F = 108; // TODO: wire to live weather
 
 const OCCUPANT_OPTIONS: { value: VehicleOccupant; label: string; sublabel: string; icon: string }[] = [
   { value: 'alone', label: 'Just Me', sublabel: 'No vulnerable passengers', icon: '🧑' },
@@ -177,6 +177,10 @@ function ActiveAlertView({
 // ─── Main Screen ──────────────────────────────────────────────────────────────
 
 export default function VehicleAlertScreen() {
+  // Current outdoor air temperature; conservative estimate if weather never loaded
+  const { tempF: liveTempF } = useWeather();
+  const CURRENT_TEMP_F = liveTempF ?? FALLBACK_TEMP_F;
+  const tempLabel = liveTempF !== null ? `${liveTempF}°F` : `~${FALLBACK_TEMP_F}°F (est.)`;
   const [session, setSession] = useState<VehicleSession | null>(null);
   const [selectedOccupant, setSelectedOccupant] = useState<VehicleOccupant>('alone');
 
@@ -269,7 +273,7 @@ export default function VehicleAlertScreen() {
                 activeOpacity={0.8}
               >
                 <Text style={styles.startButtonText}>
-                  Start Timer · {CURRENT_TEMP_F}°F Outside
+                  Start Timer · {tempLabel} Outside
                 </Text>
               </TouchableOpacity>
             </View>
@@ -279,7 +283,7 @@ export default function VehicleAlertScreen() {
               <Text style={styles.sectionTitle}>INTERIOR TEMPERATURE PROJECTION</Text>
               <View style={styles.projectionCard}>
                 <Text style={styles.projectionNote}>
-                  At {CURRENT_TEMP_F}°F outside, your vehicle interior reaches:
+                  At {tempLabel} outside, your vehicle interior reaches:
                 </Text>
                 {projections.map((p) => {
                   const danger = p.tempF >= 120 ? '#7C3AED' : p.tempF >= 110 ? '#EF4444' : p.tempF >= 100 ? '#F97316' : '#F59E0B';
