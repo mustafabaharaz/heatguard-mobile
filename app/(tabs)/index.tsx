@@ -10,6 +10,8 @@ import { AlertCircle, Thermometer, RefreshCw, MapPin, User, TrendingUp, ShieldAl
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter, useFocusEffect } from 'expo-router';
 import EmergencySOSModal from '../../src/components/emergency/EmergencySOSModal';
+import HeatGuardMark from '../../src/components/brand/HeatGuardMark';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useWeather } from '../../src/services/weather/useWeather';
 import { refreshWeather, fToC, getTodayHighF, snapshotAgeMinutes, getUpcomingDateKeys } from '../../src/services/weather/weatherStore';
 import { scheduleHeatAlert, scheduleHotDayVehicleReminders, registerForPushNotifications } from '../../src/services/notifications/push';
@@ -257,6 +259,7 @@ function IntelligenceHubCard({ temperature }: { temperature: number }) {
 
 export default function HomeScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const { formatTemp } = useSettings();
   const [refreshing, setRefreshing] = useState(false);
   const [showEmergencyModal, setShowEmergencyModal] = useState(false);
@@ -440,18 +443,23 @@ export default function HomeScreen() {
       <StatusBar style="dark" />
       <ScrollView
         style={styles.scrollView}
-        contentContainerStyle={styles.content}
+        contentContainerStyle={[styles.content, { paddingTop: insets.top + 12 }]}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       >
         {/* ── Header ──────────────────────────────────────────────────────── */}
         <View style={styles.header}>
-          <Text style={styles.title}>🛡️ HeatGuard</Text>
-          <PressableScale onPress={() => router.push("/settings")} accessibilityLabel="Settings" accessibilityRole="button" style={styles.headerAction}>
-            <Ionicons name="settings-outline" size={22} color={COLORS.ocean} />
-          </PressableScale>
+          <View style={styles.headerTop}>
+            <View style={styles.brand} accessibilityRole="header">
+              <HeatGuardMark size={30} />
+              <Text style={styles.title}>HeatGuard</Text>
+            </View>
+            <PressableScale onPress={() => router.push("/settings")} accessibilityLabel="Settings" accessibilityRole="button" style={styles.headerAction}>
+              <Ionicons name="settings-outline" size={22} color={COLORS.ocean} />
+            </PressableScale>
+          </View>
           <View style={styles.locationRow}>
             <MapPin size={16} color="#6B7280" />
-            <Text style={styles.subtitle}>{locationName}</Text>
+            <Text style={styles.subtitle} numberOfLines={1}>{locationName}</Text>
           </View>
           <Text style={styles.updatedText}>{updatedLabel}</Text>
         </View>
@@ -556,11 +564,13 @@ const styles = StyleSheet.create({
   loadingText: { marginTop: 16, fontSize: 16, color: '#6B7280' },
   scrollView: { flex: 1 },
   content: { padding: 24 },
-  header: { marginBottom: 32, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  header: { marginBottom: 28 },
+  headerTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  brand: { flexDirection: 'row', alignItems: 'center', gap: 10, flexShrink: 1 },
   headerAction: { width: 44, height: 44, alignItems: "center", justifyContent: "center" },
   title: { fontSize: 30, fontWeight: 'bold', color: COLORS.ocean },
-  locationRow: { flexDirection: 'row', alignItems: 'center', marginTop: 4 },
-  subtitle: { fontSize: 16, color: '#6B7280', marginLeft: 4 },
+  locationRow: { flexDirection: 'row', alignItems: 'center', marginTop: 8, paddingRight: 8 },
+  subtitle: { fontSize: 16, color: '#6B7280', marginLeft: 4, flexShrink: 1 },
 
   tempCard: { borderRadius: 24, padding: 32, marginBottom: 24, alignItems: 'center' },
   updatedText: { fontSize: 12, color: '#6B7280', marginTop: 4 },

@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#21406A"/>
+      <stop offset="1" stop-color="#0F1E33"/>
+    </linearGradient>
+    <linearGradient id="sun" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#F6B26B"/>
+      <stop offset="1" stop-color="#E63946"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" fill="url(#bg)"/>
+  <g transform="translate(0,-44)">
+  <!-- half sun resting on the horizon -->
+  <path d="M 292 690 A 220 220 0 0 1 732 690 Z" fill="url(#sun)"/>
+  <!-- protective shade arc -->
+  <path d="M 172 690 A 340 340 0 0 1 852 690" fill="none" stroke="#8ECAE6" stroke-width="76" stroke-linecap="round"/>
+  <!-- single heat wave under the horizon -->
+  <path d="M 352 800 q 40 -34 80 0 t 80 0 t 80 0 t 80 0" fill="none" stroke="#E76F51" stroke-width="38" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>

@@ -190,6 +190,8 @@ export default function TabLayout() {
           shadowOpacity: 0,
         },
         tabBarShowLabel: false,
+        // Let each custom tab item use the full tab width (avoids "Prof…")
+        tabBarIconStyle: { width: '100%', height: '100%' },
       }}
     >
       <Tabs.Screen

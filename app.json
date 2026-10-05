@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "heatguard",
+    "name": "HeatGuard",
     "slug": "heatguard",
     "scheme": "heatguard",
     "version": "1.0.0",
@@ -10,7 +10,7 @@
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
+      "backgroundColor": "#162A47"
     },
     "ios": {
       "supportsTablet": true,
