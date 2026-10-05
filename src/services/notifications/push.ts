@@ -85,3 +85,53 @@ function getAlertMessage(temp: number, riskLevel: string): string {
 export async function cancelAllNotifications() {
   await Notifications.cancelAllScheduledNotificationsAsync();
 }
+
+// ─── Hot-day vehicle reminder ("Look before you lock") ───────────────────────
+// Scheduled locally from the real forecast: one morning reminder on each
+// upcoming day whose high reaches the threshold. Re-planned on every weather
+// refresh, so it always matches the latest forecast. Tapping it opens the
+// Vehicle Heat Alert screen (see useNotificationRouting).
+
+const VEHICLE_REMINDER_PREFIX = 'vehicle-reminder-';
+export const VEHICLE_REMINDER_THRESHOLD_F = 95;
+const VEHICLE_REMINDER_HOUR = 7;
+const VEHICLE_REMINDER_MINUTE = 30;
+
+export async function scheduleHotDayVehicleReminders(
+  days: { dateKey: string; highF: number }[],
+): Promise<void> {
+  if (Platform.OS === 'web') return;
+  try {
+    const { status } = await Notifications.getPermissionsAsync();
+    if (status !== 'granted') return; // never prompt from a background refresh
+
+    // Clear previously planned reminders, then re-plan from this forecast
+    const scheduled = await Notifications.getAllScheduledNotificationsAsync();
+    await Promise.all(
+      scheduled
+        .filter(n => n.identifier.startsWith(VEHICLE_REMINDER_PREFIX))
+        .map(n => Notifications.cancelScheduledNotificationAsync(n.identifier)),
+    );
+
+    const now = Date.now();
+    for (const day of days) {
+      if (day.highF < VEHICLE_REMINDER_THRESHOLD_F) continue;
+      const [y, m, d] = day.dateKey.split('-').map(Number);
+      const when = new Date(y, m - 1, d, VEHICLE_REMINDER_HOUR, VEHICLE_REMINDER_MINUTE);
+      if (when.getTime() <= now + 60_000) continue;
+
+      await Notifications.scheduleNotificationAsync({
+        identifier: `${VEHICLE_REMINDER_PREFIX}${day.dateKey}`,
+        content: {
+          title: '🚗 Hot day — look before you lock',
+          body: `Today reaches ${Math.round(day.highF)}°F. A parked car can pass 120°F within minutes. Tap to start a vehicle timer when you park.`,
+          sound: true,
+          data: { route: '/vehicle/alert' },
+        },
+        trigger: { type: Notifications.SchedulableTriggerInputTypes.DATE, date: when },
+      });
+    }
+  } catch (error) {
+    console.warn('Could not schedule vehicle reminders:', error);
+  }
+}

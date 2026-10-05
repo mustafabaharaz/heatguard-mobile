@@ -11,8 +11,8 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter, useFocusEffect } from 'expo-router';
 import EmergencySOSModal from '../../src/components/emergency/EmergencySOSModal';
 import { useWeather } from '../../src/services/weather/useWeather';
-import { refreshWeather, fToC, getTodayHighF, snapshotAgeMinutes } from '../../src/services/weather/weatherStore';
-import { scheduleHeatAlert } from '../../src/services/notifications/push';
+import { refreshWeather, fToC, getTodayHighF, snapshotAgeMinutes, getUpcomingDateKeys } from '../../src/services/weather/weatherStore';
+import { scheduleHeatAlert, scheduleHotDayVehicleReminders, registerForPushNotifications } from '../../src/services/notifications/push';
 import { getHeatProfile, getRiskMultiplier, HeatProfile } from '../../src/features/profile/storage/profileStorage';
 import ExposureSessionCard from '../../src/components/exposure/ExposureSessionCard';
 import { PassiveTracker } from '../../src/features/exposure/passiveTracker';
@@ -325,6 +325,21 @@ export default function HomeScreen() {
     }
   }, [snapshot?.fetchedAt, heatProfile.alertThreshold]);
 
+  // Ask for notification permission once (heat alerts + hot-day reminders)
+  useEffect(() => {
+    registerForPushNotifications().catch(() => {});
+  }, []);
+
+  // Re-plan "look before you lock" reminders whenever the forecast updates
+  useEffect(() => {
+    if (!snapshot) return;
+    const days = getUpcomingDateKeys(snapshot, 5)
+      .map(dateKey => snapshot.daily.find(d => d.dateKey === dateKey))
+      .filter((d): d is NonNullable<typeof d> => !!d)
+      .map(d => ({ dateKey: d.dateKey, highF: d.highF }));
+    scheduleHotDayVehicleReminders(days);
+  }, [snapshot?.fetchedAt]);
+
   // Refresh every 15 minutes while Home is mounted
   useEffect(() => {
     const id = setInterval(() => { refreshWeather(true); }, 15 * 60 * 1000);
@@ -378,14 +393,6 @@ export default function HomeScreen() {
       { text: 'Cancel', style: 'cancel' },
       { text: 'Call Now', style: 'destructive', onPress: () => { setShowEmergencyModal(false); Linking.openURL('tel:911'); } },
     ]);
-  };
-
-  const handleContactFamily = () => {
-    Alert.alert('Alert Sent', 'Your emergency contacts have been notified.', [{ text: 'OK', onPress: () => setShowEmergencyModal(false) }]);
-  };
-
-  const handleShareLocation = () => {
-    Alert.alert('Location Shared', 'Your GPS coordinates have been sent.', [{ text: 'OK', onPress: () => setShowEmergencyModal(false) }]);
   };
 
   // No weather has ever loaded yet
@@ -538,9 +545,6 @@ export default function HomeScreen() {
       <EmergencySOSModal
         visible={showEmergencyModal}
         onClose={() => setShowEmergencyModal(false)}
-        onCallEmergency={handleCallEmergency}
-        onContactFamily={handleContactFamily}
-        onShareLocation={handleShareLocation}
       />
     </View>
   );

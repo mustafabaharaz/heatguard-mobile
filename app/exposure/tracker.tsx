@@ -12,6 +12,7 @@ import {
   StyleSheet,
   ScrollView,
   Animated,
+  TouchableOpacity,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -25,6 +26,7 @@ import {
   formatCountdown,
   escalationStepLabel,
 } from '../../src/features/exposure/deadManSwitch';
+import { textContacts } from '../../src/features/emergency/emergencyMessaging';
 
 // ── Inline design tokens (matches project pattern) ────────────────────────
 
@@ -137,11 +139,13 @@ function EscalationCard({
   seconds,
   onImOK,
   onCall911,
+  onTextContacts,
 }: {
   step: EscalationStep;
   seconds: number;
   onImOK: () => void;
   onCall911: () => void;
+  onTextContacts: () => void;
 }) {
   if (step === 'idle' || step === 'resolved') return null;
 
@@ -178,35 +182,48 @@ function EscalationCard({
 
       <Text style={styles.escalationBody}>
         {isCheckin
-          ? 'You have been in the heat beyond your safe limit. Confirm you are okay, or your emergency contacts will be alerted.'
+          ? 'You have been in the heat beyond your safe limit. Tap “I’m OK” to confirm you are safe.'
           : isAlerting
-          ? 'Your emergency contacts have been notified and your location has been shared. If no one confirms you are safe within 5 minutes, 911 will be called.'
-          : 'Unable to reach your emergency contacts. Calling 911 now — hold your phone close.'}
+          ? 'You haven’t responded. If you need help, text your emergency contacts your location now. HeatGuard will open a 911 call in 5 minutes unless you respond.'
+          : 'Opening a 911 call — tap Call on the next screen to connect. You can also text your contacts your location.'}
       </Text>
 
       <View style={styles.escalationActions}>
         {!isCalling && (
-          <View
+          <TouchableOpacity
             style={[styles.okButton, { backgroundColor: cardColor }]}
-            accessible
+            onPress={onImOK}
+            activeOpacity={0.8}
             accessibilityRole="button"
             accessibilityLabel="I am okay"
           >
-            <Text style={styles.okButtonText} onPress={onImOK}>I'm OK</Text>
-          </View>
+            <Text style={styles.okButtonText}>I'm OK</Text>
+          </TouchableOpacity>
         )}
-        <View
+        <TouchableOpacity
           style={[styles.call911Button, { borderColor: COLORS.crisis + '60' }]}
-          accessible
+          onPress={onCall911}
+          activeOpacity={0.8}
           accessibilityRole="button"
           accessibilityLabel="Call 911 now"
         >
           <Ionicons name="call" size={16} color={COLORS.crisis} />
-          <Text style={[styles.call911Text, { color: COLORS.crisis }]} onPress={onCall911}>
-            Call 911
-          </Text>
-        </View>
+          <Text style={[styles.call911Text, { color: COLORS.crisis }]}>Call 911</Text>
+        </TouchableOpacity>
       </View>
+
+      {(isAlerting || isCalling) && (
+        <TouchableOpacity
+          style={[styles.textContactsButton, { backgroundColor: COLORS.crisis }]}
+          onPress={onTextContacts}
+          activeOpacity={0.85}
+          accessibilityRole="button"
+          accessibilityLabel="Text my emergency contacts my location"
+        >
+          <Ionicons name="chatbubbles" size={18} color="#FFFFFF" />
+          <Text style={styles.textContactsText}>Text my contacts my location</Text>
+        </TouchableOpacity>
+      )}
 
       <View style={styles.pillsRow}>
         {allSteps.map((s, i) => (
@@ -217,7 +234,7 @@ function EscalationCard({
         ))}
       </View>
       <View style={styles.pillLabels}>
-        {['Check-in', 'Alert contacts', 'Call 911'].map((l) => (
+        {['Check-in', 'Urgent alert', '911 call'].map((l) => (
           <Text key={l} style={styles.pillLabel}>{l}</Text>
         ))}
       </View>
@@ -246,6 +263,7 @@ export default function ExposureTrackerScreen() {
 
   const handleImOK    = useCallback(() => DeadManSwitch.userConfirmedOK(), []);
   const handleCall911 = useCallback(() => DeadManSwitch.manualCall911(), []);
+  const handleTextContacts = useCallback(() => { textContacts('I haven’t responded to my HeatGuard heat check-in and may need help.'); }, []);
   const handleEnd     = useCallback(() => {
     DeadManSwitch.reset();
     PassiveTracker.stopSession();
@@ -339,6 +357,7 @@ export default function ExposureTrackerScreen() {
             seconds={dms.countdownSeconds}
             onImOK={handleImOK}
             onCall911={handleCall911}
+            onTextContacts={handleTextContacts}
           />
         )}
 
@@ -413,6 +432,8 @@ const styles = StyleSheet.create({
   okButtonText:      { fontSize: 15, fontWeight: '600', color: '#fff' },
   call911Button:     { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 16, paddingVertical: 12, borderRadius: 12, borderWidth: 1.5 },
   call911Text:       { fontSize: 15, fontWeight: '600' },
+  textContactsButton:{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, marginTop: 12, minHeight: 52, borderRadius: 12, paddingHorizontal: 16 },
+  textContactsText:  { color: '#FFFFFF', fontSize: 16, fontWeight: '700' },
   pillsRow:          { flexDirection: 'row', gap: 6, paddingHorizontal: 20, paddingBottom: 6 },
   pill:              { flex: 1, height: 4, borderRadius: 2 },
   pillLabels:        { flexDirection: 'row', paddingHorizontal: 20, paddingBottom: 16 },

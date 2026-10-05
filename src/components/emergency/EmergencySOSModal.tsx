@@ -2,13 +2,11 @@ import { Modal, View, Text, TouchableOpacity, StyleSheet, Linking, Alert, Scroll
 import { X, Phone, Users, MapPin, AlertTriangle, CheckCircle, ChevronRight, Clock } from 'lucide-react-native';
 import { useState, useEffect, useRef } from 'react';
 import { getPrimaryContact } from '../../features/emergency/storage/contactStorage';
+import { textContacts, shareLocation, call911 } from '../../features/emergency/emergencyMessaging';
 
 interface Props {
   visible: boolean;
   onClose: () => void;
-  onCallEmergency: () => void;
-  onContactFamily: () => void;
-  onShareLocation: () => void;
 }
 
 const COLORS = {
@@ -69,7 +67,7 @@ function getSeverityConfig(level: SeverityLevel) {
 
 type Step = 'symptom-check' | 'escalation' | 'actions';
 
-export default function EmergencySOSModal({ visible, onClose, onCallEmergency, onContactFamily, onShareLocation }: Props) {
+export default function EmergencySOSModal({ visible, onClose }: Props) {
   const [step, setStep] = useState<Step>('symptom-check');
   const [selectedSymptoms, setSelectedSymptoms] = useState<string[]>([]);
   const [countdown, setCountdown] = useState(30);
@@ -95,7 +93,8 @@ export default function EmergencySOSModal({ visible, onClose, onCallEmergency, o
         setCountdown(prev => {
           if (prev <= 1) {
             stopCountdown();
-            handleCall911();
+            onClose();
+            call911(); // iOS shows its own Call confirmation
             return 0;
           }
           return prev - 1;
@@ -134,32 +133,33 @@ export default function EmergencySOSModal({ visible, onClose, onCallEmergency, o
 
   const handleCall911 = () => {
     stopCountdown();
-    Alert.alert('Call 911?', 'This will immediately call emergency services.', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Call Now', style: 'destructive', onPress: () => { onClose(); Linking.openURL('tel:911'); } },
-    ]);
+    onClose();
+    call911(); // iOS shows its own Call confirmation
   };
 
   const handleContactFamily = () => {
     stopCountdown();
     const primaryContact = getPrimaryContact();
-    if (!primaryContact) {
-      Alert.alert('No Emergency Contacts', 'Please add contacts in Profile → Emergency Contacts.', [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Add Now', onPress: onClose },
-      ]);
-      return;
-    }
-    Alert.alert(`Contact ${primaryContact.name}?`, `Call or text ${primaryContact.phoneNumber}`, [
+    const buttons: { text: string; style?: 'cancel' | 'destructive' | 'default'; onPress?: () => void }[] = [
       { text: 'Cancel', style: 'cancel' },
-      { text: 'Call', onPress: () => { onClose(); Linking.openURL(`tel:${primaryContact.phoneNumber}`); } },
-      { text: 'Text', onPress: () => { onClose(); Linking.openURL(`sms:${primaryContact.phoneNumber}?body=🆘 Emergency alert from HeatGuard. I need help due to heat conditions. Please check on me.`); } },
-    ]);
+      { text: 'Text all contacts + my location', onPress: () => { textContacts(); } },
+    ];
+    if (primaryContact) {
+      buttons.push({
+        text: `Call ${primaryContact.name}`,
+        onPress: () => { onClose(); Linking.openURL(`tel:${primaryContact.phoneNumber}`); },
+      });
+    }
+    Alert.alert(
+      'Contact family',
+      'Texts open ready to send with a map link to where you are — just tap Send.',
+      buttons,
+    );
   };
 
   const handleShareLocation = () => {
     stopCountdown();
-    onShareLocation();
+    shareLocation();
   };
 
   const severity = assessSeverity(selectedSymptoms);
@@ -282,7 +282,7 @@ export default function EmergencySOSModal({ visible, onClose, onCallEmergency, o
           <View style={styles.countdownBanner}>
             <Clock size={18} color={COLORS.lava} />
             <Text style={styles.countdownText}>
-              Auto-calling 911 in <Text style={styles.countdownNum}>{countdown}s</Text>
+              Opening 911 call in <Text style={styles.countdownNum}>{countdown}s</Text>
             </Text>
             <TouchableOpacity onPress={stopCountdown} style={styles.countdownCancelBtn}>
               <Text style={styles.countdownCancelText}>Cancel</Text>

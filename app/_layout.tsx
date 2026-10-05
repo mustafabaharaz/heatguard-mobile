@@ -2,9 +2,11 @@ import { Stack } from 'expo-router';
 import { SettingsProvider } from '../src/context/SettingsContext';
 import { useOfflineSync } from '../src/utils/useOfflineSync';
 import { OfflineBanner } from '../src/components/ui/OfflineBanner';
+import { useNotificationRouting } from '../src/services/notifications/useNotificationRouting';
 
 export default function RootLayout() {
   useOfflineSync();
+  useNotificationRouting();
   return (
     <SettingsProvider>
       <OfflineBanner />

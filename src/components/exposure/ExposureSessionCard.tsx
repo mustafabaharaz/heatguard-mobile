@@ -104,10 +104,10 @@ export default function ExposureSessionCard({ currentTempF }: Props) {
           </View>
           <Text style={s.alertSub}>
             {dms.step === 'checkin'
-              ? `Respond within ${formatCountdown(dms.countdownSeconds)} — contacts will be alerted if you don't`
+              ? `Respond within ${formatCountdown(dms.countdownSeconds)} — tap to confirm you're OK`
               : dms.step === 'alertContacts'
-              ? `Contacts alerted · 911 in ${formatCountdown(dms.countdownSeconds)}`
-              : 'Calling 911 — open app to cancel'}
+              ? `Urgent — respond now · 911 call in ${formatCountdown(dms.countdownSeconds)}`
+              : 'Opening 911 call — open app'}
           </Text>
         </View>
       </Pressable>

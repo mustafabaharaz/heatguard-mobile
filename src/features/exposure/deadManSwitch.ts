@@ -5,12 +5,16 @@
  * Runs a 3-step escalation ladder:
  *
  *   Step 1: Check-in prompt (60s countdown) — user confirms they're OK
- *   Step 2: Alert all emergency contacts + share GPS location
- *   Step 3: Auto-call 911 after 5 additional minutes of no confirmation
+ *   Step 2: Urgent alert to the USER (loud notification) + one-tap
+ *           "text my contacts my location" in the UI
+ *   Step 3: Open the 911 call prompt after 5 more minutes without a response
+ *
+ * Honest limits (iOS): an app cannot send texts or place calls without the
+ * user's tap, and timers pause while the app is in the background. Truly
+ * automatic contact alerts need a server-side SMS service (planned, v1.1+).
  *
  * The switch resets when:
  *   - User responds "I'm OK" at any step
- *   - An emergency contact confirms via the app
  *   - The user manually ends their tracking session
  */
 
@@ -123,14 +127,14 @@ class DeadManSwitchService {
       step: 'alertContacts',
       countdownSeconds: CONTACT_ALERT_WAIT_S,
       stepEnteredAt: Date.now(),
-      contactsAlerted: true,
-      locationShared: true,
+      contactsAlerted: false,
+      locationShared: false,
     };
 
     this.emit();
 
-    // Fire the actual notifications to contacts
-    await this.notifyContacts();
+    // Loud alert to the user (contacts are texted via the UI button)
+    await this.alertUser();
 
     // Start a new countdown to auto-911
     this.startCountdown(CONTACT_ALERT_WAIT_S, () => this.escalateToStep3());
@@ -150,7 +154,7 @@ class DeadManSwitchService {
 
     this.emit();
 
-    // Attempt to open the phone dialer pre-filled with 911
+    // Open the 911 call prompt (iOS requires the user to tap Call)
     try {
       const canCall = await Linking.canOpenURL(CALL_911);
       if (canCall) {
@@ -218,17 +222,15 @@ class DeadManSwitchService {
     }
   }
 
-  private async notifyContacts() {
-    // Load emergency contacts from storage and fire SMS / push
-    // In a production app this would call a backend API that sends
-    // authenticated push notifications and SMS to stored contacts.
-    // For now we schedule a local notification as the fallback.
+  private async alertUser() {
+    // Urgent local notification to the user's own phone. This does NOT reach
+    // emergency contacts — that requires the user's tap (see emergencyMessaging).
     try {
       const Notifications = require('expo-notifications');
       await Notifications.scheduleNotificationAsync({
         content: {
-          title: '🆘 HeatGuard — Safety Alert',
-          body: 'Your contact may need help. Their location has been shared with you.',
+          title: '🆘 HeatGuard — Are you okay?',
+          body: "You haven't responded to your heat check-in. Open HeatGuard to confirm you're safe or text your contacts.",
           sound: true,
           priority: Notifications.AndroidNotificationPriority.MAX,
         },
@@ -265,8 +267,8 @@ export function formatCountdown(seconds: number): string {
 export function escalationStepLabel(step: EscalationStep): string {
   switch (step) {
     case 'checkin':      return 'Check-in required';
-    case 'alertContacts': return 'Alerting your contacts';
-    case 'call911':      return 'Calling 911';
+    case 'alertContacts': return 'Urgent — are you okay?';
+    case 'call911':      return 'Opening 911 call';
     case 'resolved':     return "You're safe";
     default:             return '';
   }
