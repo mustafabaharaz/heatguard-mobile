@@ -1,234 +1,215 @@
-import { View, Text, TouchableOpacity, StyleSheet, Dimensions, ScrollView } from 'react-native';
-import { StatusBar } from 'expo-status-bar';
-import { useRouter } from 'expo-router';
-import { useState, useRef } from 'react';
-import { Thermometer, Users, Shield } from 'lucide-react-native';
-import { Platform } from 'react-native';
+// ─────────────────────────────────────────────────────────────────────────────
+// HeatGuard · Onboarding
+// Three short intro slides, then a required safety & medical acknowledgment.
+// Shown on first launch (and again if the disclaimer version changes).
+// ─────────────────────────────────────────────────────────────────────────────
 
-const { width } = Dimensions.get('window');
+import React, { useRef, useState } from 'react';
+import {
+  View,
+  Text,
+  TouchableOpacity,
+  StyleSheet,
+  ScrollView,
+  useWindowDimensions,
+  NativeSyntheticEvent,
+  NativeScrollEvent,
+} from 'react-native';
+import { StatusBar } from 'expo-status-bar';
+import { router } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
+import HeatGuardMark from '../../src/components/brand/HeatGuardMark';
+import { DISCLAIMER_POINTS, DISCLAIMER_TITLE } from '../../src/content/disclaimer';
+import { acceptDisclaimer } from '../../src/features/settings/appPrefs';
 
 const COLORS = {
+  ocean: '#1D3557',
   glacier: '#8ECAE6',
-  desert: '#F4A261',
   ember: '#E76F51',
   lava: '#E63946',
-  ocean: '#1D3557',
+  text: '#1D3557',
+  textSecondary: '#4B5563',
+  border: '#E5E7EB',
+  surface: '#F9FAFB',
+  white: '#FFFFFF',
 };
 
-const SLIDES = [
+type IconName = React.ComponentProps<typeof Ionicons>['name'];
+
+const SLIDES: { icon: IconName; color: string; title: string; body: string }[] = [
   {
-    id: 1,
-    icon: Thermometer,
-    title: 'Real-Time Heat Monitoring',
-    description: 'Stay aware of dangerous heat conditions with live temperature tracking and personalized risk alerts.',
+    icon: 'thermometer-outline',
     color: COLORS.ember,
+    title: 'Know the heat where you are',
+    body: 'Live local conditions and a 5-day forecast, with risk based on how hot it actually feels.',
   },
   {
-    id: 2,
-    icon: Users,
-    title: 'Community Check-ins',
-    description: 'Help vulnerable residents stay safe. Track check-ins, coordinate with volunteers, and respond quickly.',
-    color: COLORS.glacier,
-  },
-  {
-    id: 3,
-    icon: Shield,
-    title: 'Emergency Response',
-    description: 'One-tap SOS connects you with emergency services, alerts your contacts, and shares your location.',
+    icon: 'person-circle-outline',
     color: COLORS.ocean,
+    title: 'A plan made for you',
+    body: 'Add your age, health, and activity level to get personal risk levels, safe outdoor windows, and a daily water target.',
+  },
+  {
+    icon: 'call-outline',
+    color: COLORS.lava,
+    title: 'Help in one tap',
+    body: 'SOS opens a text to your emergency contacts with your location, or a 911 call. Add your contacts in Profile.',
   },
 ];
 
 export default function OnboardingScreen() {
-  const router = useRouter();
-  const [currentIndex, setCurrentIndex] = useState(0);
-  const scrollViewRef = useRef<ScrollView>(null);
+  const { width } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
+  const scrollRef = useRef<ScrollView>(null);
+  const [index, setIndex] = useState(0);
 
-  const handleNext = () => {
-    if (currentIndex < SLIDES.length - 1) {
-      const nextIndex = currentIndex + 1;
-      setCurrentIndex(nextIndex);
-      scrollViewRef.current?.scrollTo({ x: width * nextIndex, animated: true });
-    } else {
-      handleGetStarted();
-    }
+  const lastIndex = SLIDES.length; // disclaimer page comes after the slides
+  const onDisclaimer = index === lastIndex;
+
+  const goTo = (i: number) => {
+    setIndex(i);
+    scrollRef.current?.scrollTo({ x: width * i, animated: true });
   };
 
-  const handleSkip = () => {
-    handleGetStarted();
+  const onScrollEnd = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    setIndex(Math.round(e.nativeEvent.contentOffset.x / width));
   };
 
-  const handleGetStarted = () => {
-    // Store that onboarding is complete
-    try {
-      if (Platform.OS === 'web') {
-        localStorage.setItem('onboarding_complete', 'true');
-      } else {
-        const { MMKV } = require('../../src/lib/mmkvCompat');
-        const storage = new MMKV();
-        storage.set('onboarding_complete', true);
-      }
-    } catch (error) {
-      console.error('Error saving onboarding:', error);
-    }
-    
-    // Force navigation to tabs
+  const handleAccept = () => {
+    acceptDisclaimer();
     router.replace('/(tabs)');
   };
 
-  const handleScroll = (event: any) => {
-    const offsetX = event.nativeEvent.contentOffset.x;
-    const index = Math.round(offsetX / width);
-    setCurrentIndex(index);
-  };
-
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom + 16 }]}>
       <StatusBar style="dark" />
 
-      {/* Skip Button */}
-      {currentIndex < SLIDES.length - 1 && (
-        <TouchableOpacity style={styles.skipButton} onPress={handleSkip}>
-          <Text style={styles.skipText}>Skip</Text>
-        </TouchableOpacity>
-      )}
+      <View style={styles.topBar}>
+        <HeatGuardMark size={26} />
+        {!onDisclaimer && (
+          <TouchableOpacity
+            onPress={() => goTo(lastIndex)}
+            style={styles.skipButton}
+            accessibilityRole="button"
+            accessibilityLabel="Skip to safety information"
+          >
+            <Text style={styles.skipText}>Skip</Text>
+          </TouchableOpacity>
+        )}
+      </View>
 
-      {/* Slides */}
       <ScrollView
-        ref={scrollViewRef}
+        ref={scrollRef}
         horizontal
         pagingEnabled
         showsHorizontalScrollIndicator={false}
-        onScroll={handleScroll}
-        scrollEventThrottle={16}
-        style={styles.scrollView}
+        onMomentumScrollEnd={onScrollEnd}
+        style={styles.pager}
       >
-        {SLIDES.map((slide) => {
-          const IconComponent = slide.icon;
-          return (
-            <View key={slide.id} style={styles.slide}>
-              <View style={styles.content}>
-                <View style={[styles.iconContainer, { backgroundColor: `${slide.color}20` }]}>
-                  <IconComponent size={80} color={slide.color} strokeWidth={1.5} />
-                </View>
-                
-                <Text style={styles.title}>{slide.title}</Text>
-                <Text style={styles.description}>{slide.description}</Text>
-              </View>
+        {SLIDES.map(slide => (
+          <View key={slide.title} style={[styles.page, { width }]}>
+            <View style={[styles.iconCircle, { backgroundColor: slide.color + '1A' }]}>
+              <Ionicons name={slide.icon} size={64} color={slide.color} />
             </View>
-          );
-        })}
+            <Text style={styles.title}>{slide.title}</Text>
+            <Text style={styles.body}>{slide.body}</Text>
+          </View>
+        ))}
+
+        {/* Safety & medical acknowledgment */}
+        <ScrollView style={{ width }} contentContainerStyle={styles.disclaimerPage}>
+          <Text style={styles.disclaimerTitle}>{DISCLAIMER_TITLE}</Text>
+          <Text style={styles.disclaimerIntro}>Please read this once. It matters for your safety.</Text>
+          {DISCLAIMER_POINTS.map(point => (
+            <View key={point.text} style={styles.point}>
+              <Ionicons name={point.icon as IconName} size={22} color={COLORS.ocean} style={styles.pointIcon} />
+              <Text style={styles.pointText}>{point.text}</Text>
+            </View>
+          ))}
+        </ScrollView>
       </ScrollView>
 
-      {/* Pagination Dots */}
-      <View style={styles.pagination}>
-        {SLIDES.map((_, index) => (
-          <View
-            key={index}
-            style={[
-              styles.dot,
-              index === currentIndex && styles.dotActive,
-            ]}
-          />
+      <View style={styles.dots} accessibilityElementsHidden>
+        {[...SLIDES, null].map((_, i) => (
+          <View key={i} style={[styles.dot, i === index && styles.dotActive]} />
         ))}
       </View>
 
-      {/* Next/Get Started Button */}
       <View style={styles.footer}>
-        <TouchableOpacity style={styles.button} onPress={handleNext}>
-          <Text style={styles.buttonText}>
-            {currentIndex === SLIDES.length - 1 ? 'Get Started' : 'Next'}
-          </Text>
-        </TouchableOpacity>
+        {onDisclaimer ? (
+          <TouchableOpacity
+            style={styles.primaryButton}
+            onPress={handleAccept}
+            activeOpacity={0.85}
+            accessibilityRole="button"
+            accessibilityLabel="I understand. Continue to HeatGuard"
+          >
+            <Text style={styles.primaryButtonText}>I understand</Text>
+          </TouchableOpacity>
+        ) : (
+          <TouchableOpacity
+            style={styles.primaryButton}
+            onPress={() => goTo(index + 1)}
+            activeOpacity={0.85}
+            accessibilityRole="button"
+          >
+            <Text style={styles.primaryButtonText}>Next</Text>
+          </TouchableOpacity>
+        )}
       </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#fff',
-  },
-  skipButton: {
-    position: 'absolute',
-    top: 60,
-    right: 20,
-    zIndex: 10,
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-  },
-  skipText: {
-    fontSize: 16,
-    color: COLORS.ocean,
-    fontWeight: '600',
-  },
-  scrollView: {
-    flex: 1,
-  },
-  slide: {
-    width,
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 40,
-  },
-  content: {
-    alignItems: 'center',
-    maxWidth: 400,
-  },
-  iconContainer: {
-    width: 160,
-    height: 160,
-    borderRadius: 80,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 48,
-  },
-  title: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: COLORS.ocean,
-    textAlign: 'center',
-    marginBottom: 16,
-  },
-  description: {
-    fontSize: 18,
-    color: '#6B7280',
-    textAlign: 'center',
-    lineHeight: 28,
-  },
-  pagination: {
+  container: { flex: 1, backgroundColor: COLORS.white },
+  topBar: {
     flexDirection: 'row',
-    justifyContent: 'center',
     alignItems: 'center',
-    paddingVertical: 32,
-    gap: 8,
-  },
-  dot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: '#D1D5DB',
-  },
-  dotActive: {
-    width: 24,
-    backgroundColor: COLORS.ocean,
-  },
-  footer: {
+    justifyContent: 'space-between',
     paddingHorizontal: 24,
-    paddingBottom: 48,
+    minHeight: 52,
   },
-  button: {
-    backgroundColor: COLORS.ocean,
-    borderRadius: 16,
-    paddingVertical: 18,
+  skipButton: { minWidth: 44, minHeight: 44, alignItems: 'flex-end', justifyContent: 'center' },
+  skipText: { fontSize: 16, color: COLORS.textSecondary, fontWeight: '500' },
+  pager: { flex: 1 },
+  page: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32 },
+  iconCircle: {
+    width: 140,
+    height: 140,
+    borderRadius: 70,
     alignItems: 'center',
-    minHeight: 44,
+    justifyContent: 'center',
+    marginBottom: 36,
   },
-  buttonText: {
-    color: 'white',
-    fontSize: 18,
-    fontWeight: 'bold',
+  title: { fontSize: 26, fontWeight: '700', color: COLORS.text, textAlign: 'center', marginBottom: 14 },
+  body: { fontSize: 17, lineHeight: 26, color: COLORS.textSecondary, textAlign: 'center', maxWidth: 360 },
+  disclaimerPage: { paddingHorizontal: 24, paddingTop: 12, paddingBottom: 24 },
+  disclaimerTitle: { fontSize: 28, fontWeight: '700', color: COLORS.text, marginBottom: 6 },
+  disclaimerIntro: { fontSize: 16, color: COLORS.textSecondary, marginBottom: 20 },
+  point: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    backgroundColor: COLORS.surface,
+    borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: COLORS.border,
+    padding: 14,
+    marginBottom: 10,
   },
+  pointIcon: { marginRight: 12, marginTop: 1 },
+  pointText: { flex: 1, fontSize: 15, lineHeight: 22, color: COLORS.text },
+  dots: { flexDirection: 'row', justifyContent: 'center', gap: 8, marginVertical: 16 },
+  dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: COLORS.border },
+  dotActive: { width: 24, backgroundColor: COLORS.ocean },
+  footer: { paddingHorizontal: 24 },
+  primaryButton: {
+    backgroundColor: COLORS.ocean,
+    minHeight: 54,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  primaryButtonText: { color: COLORS.white, fontSize: 17, fontWeight: '600' },
 });

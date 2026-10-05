@@ -1,5 +1,6 @@
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
+import { getNotificationPrefs } from '../../features/settings/appPrefs';
 
 // Configure notification behavior
 Notifications.setNotificationHandler({
@@ -97,21 +98,29 @@ export const VEHICLE_REMINDER_THRESHOLD_F = 95;
 const VEHICLE_REMINDER_HOUR = 7;
 const VEHICLE_REMINDER_MINUTE = 30;
 
-export async function scheduleHotDayVehicleReminders(
-  days: { dateKey: string; highF: number }[],
-): Promise<void> {
+export async function cancelVehicleReminders(): Promise<void> {
   if (Platform.OS === 'web') return;
   try {
-    const { status } = await Notifications.getPermissionsAsync();
-    if (status !== 'granted') return; // never prompt from a background refresh
-
-    // Clear previously planned reminders, then re-plan from this forecast
     const scheduled = await Notifications.getAllScheduledNotificationsAsync();
     await Promise.all(
       scheduled
         .filter(n => n.identifier.startsWith(VEHICLE_REMINDER_PREFIX))
         .map(n => Notifications.cancelScheduledNotificationAsync(n.identifier)),
     );
+  } catch {}
+}
+
+export async function scheduleHotDayVehicleReminders(
+  days: { dateKey: string; highF: number }[],
+): Promise<void> {
+  if (Platform.OS === 'web') return;
+  try {
+    // Clear previously planned reminders, then re-plan from this forecast
+    await cancelVehicleReminders();
+    if (!getNotificationPrefs().vehicleReminders) return; // user turned them off
+
+    const { status } = await Notifications.getPermissionsAsync();
+    if (status !== 'granted') return; // never prompt from a background refresh
 
     const now = Date.now();
     for (const day of days) {

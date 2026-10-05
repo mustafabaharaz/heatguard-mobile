@@ -11,6 +11,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter, useFocusEffect } from 'expo-router';
 import EmergencySOSModal from '../../src/components/emergency/EmergencySOSModal';
 import HeatGuardMark from '../../src/components/brand/HeatGuardMark';
+import { getNotificationPrefs } from '../../src/features/settings/appPrefs';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useWeather } from '../../src/services/weather/useWeather';
 import { refreshWeather, fToC, getTodayHighF, snapshotAgeMinutes, getUpcomingDateKeys } from '../../src/services/weather/weatherStore';
@@ -321,7 +322,7 @@ export default function HomeScreen() {
     }
     const threshold = heatProfile.alertThreshold ?? 35;
     const rounded = Math.round(feelsC);
-    if (rounded >= threshold && rounded !== lastAlertTemp.current) {
+    if (getNotificationPrefs().heatAlerts && rounded >= threshold && rounded !== lastAlertTemp.current) {
       const riskLevel = rounded >= 40 ? 'critical' : rounded >= 35 ? 'high' : 'caution';
       Promise.resolve(scheduleHeatAlert(rounded, riskLevel)).catch(() => {});
       lastAlertTemp.current = rounded;

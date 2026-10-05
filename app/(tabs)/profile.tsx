@@ -3,7 +3,6 @@ import { StatusBar } from 'expo-status-bar';
 import { Bell, User, Settings, Shield, ChevronRight, Heart } from 'lucide-react-native';
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter, useFocusEffect } from 'expo-router';
-import { registerForPushNotifications, scheduleDailyCheck, cancelAllNotifications } from '../../src/services/notifications/push';
 import { getContacts } from '../../src/features/emergency/storage/contactStorage';
 import { getHeatProfile } from '../../src/features/profile/storage/profileStorage';
 
@@ -14,15 +13,9 @@ const COLORS = {
 
 export default function ProfileScreen() {
   const router = useRouter();
-  const [notificationsEnabled, setNotificationsEnabled] = useState(false);
-  const [heatAlertsEnabled, setHeatAlertsEnabled] = useState(true);
-  const [dailyCheckEnabled, setDailyCheckEnabled] = useState(true);
   const [contactCount, setContactCount] = useState(0);
   const [heatProfile, setHeatProfile] = useState(getHeatProfile());
 
-  useEffect(() => {
-    checkNotificationPermission();
-  }, []);
 
   // Refresh every time this tab comes into view (tabs stay mounted)
   useFocusEffect(useCallback(() => {
@@ -30,31 +23,6 @@ export default function ProfileScreen() {
     setContactCount(getContacts().length);
   }, []));
 
-  const checkNotificationPermission = async () => {
-    const status = await registerForPushNotifications();
-    setNotificationsEnabled(status === 'granted');
-  };
-
-  const handleToggleNotifications = async (value: boolean) => {
-    if (value) {
-      const status = await registerForPushNotifications();
-      if (status === 'granted') {
-        setNotificationsEnabled(true);
-        Alert.alert('✓ Enabled', 'Push notifications are now enabled!');
-      } else {
-        Alert.alert('Permission Denied', 'Please enable notifications in your device settings.');
-      }
-    } else {
-      await cancelAllNotifications();
-      setNotificationsEnabled(false);
-    }
-  };
-
-  const handleToggleDailyCheck = async (value: boolean) => {
-    setDailyCheckEnabled(value);
-    if (value) { await scheduleDailyCheck(14); }
-    else { await cancelAllNotifications(); }
-  };
 
   const profileName = heatProfile.profileComplete ? heatProfile.name : 'Volunteer';
   const profileSub = heatProfile.profileComplete
@@ -105,37 +73,20 @@ export default function ProfileScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* Notifications */}
+        {/* Notifications live in Settings */}
         <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Bell size={20} color={COLORS.ocean} />
-            <Text style={styles.sectionTitle}>Notifications</Text>
-          </View>
-          <View style={styles.settingRow}>
-            <View style={styles.settingInfo}>
-              <Text style={styles.settingLabel}>Push Notifications</Text>
-              <Text style={styles.settingDescription}>Receive alerts about heat conditions</Text>
+          <TouchableOpacity
+            style={styles.menuItem}
+            onPress={() => router.push('/settings')}
+            accessibilityRole="button"
+            accessibilityLabel="Notifications and app settings"
+          >
+            <View style={styles.sectionHeader}>
+              <Bell size={20} color={COLORS.ocean} />
+              <Text style={styles.sectionTitle}>Notifications & settings</Text>
             </View>
-            <Switch value={notificationsEnabled} onValueChange={handleToggleNotifications} trackColor={{ false: '#D1D5DB', true: COLORS.glacier }} thumbColor={notificationsEnabled ? COLORS.ocean : '#9CA3AF'} />
-          </View>
-          {notificationsEnabled && (
-            <>
-              <View style={styles.settingRow}>
-                <View style={styles.settingInfo}>
-                  <Text style={styles.settingLabel}>Heat Alerts</Text>
-                  <Text style={styles.settingDescription}>Alert when temperature reaches danger levels (≥{heatProfile.alertThreshold}°C)</Text>
-                </View>
-                <Switch value={heatAlertsEnabled} onValueChange={setHeatAlertsEnabled} trackColor={{ false: '#D1D5DB', true: COLORS.glacier }} thumbColor={heatAlertsEnabled ? COLORS.ocean : '#9CA3AF'} />
-              </View>
-              <View style={styles.settingRow}>
-                <View style={styles.settingInfo}>
-                  <Text style={styles.settingLabel}>Daily Check Reminder</Text>
-                  <Text style={styles.settingDescription}>Daily reminder at 2 PM to check on residents</Text>
-                </View>
-                <Switch value={dailyCheckEnabled} onValueChange={handleToggleDailyCheck} trackColor={{ false: '#D1D5DB', true: COLORS.glacier }} thumbColor={dailyCheckEnabled ? COLORS.ocean : '#9CA3AF'} />
-              </View>
-            </>
-          )}
+            <ChevronRight size={20} color="#9CA3AF" />
+          </TouchableOpacity>
         </View>
 
         {/* Safety */}

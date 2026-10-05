@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import {
   Alert,
+  Linking,
   ScrollView,
   StyleSheet,
   Switch,
@@ -8,12 +9,22 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useSettings } from '../src/context/SettingsContext';
 import PressableScale from '../src/components/ui/PressableScale';
 import haptics from '../src/utils/haptics';
+import * as Notifications from 'expo-notifications';
+import { clearAllStores } from '../src/lib/mmkvCompat';
+import { LINKS } from '../src/config/links';
+import {
+  getNotificationPrefs,
+  setNotificationPref,
+  type NotificationPrefs,
+} from '../src/features/settings/appPrefs';
+import { scheduleHotDayVehicleReminders, cancelVehicleReminders } from '../src/services/notifications/push';
+import { getWeatherSnapshot, getUpcomingDateKeys } from '../src/services/weather/weatherStore';
 
 const C = {
   primary: '#1D3557',
@@ -111,23 +122,65 @@ const NavRow: React.FC<NavRowProps> = ({ icon, label, description, onPress, sepa
 
 export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
-  const { tempUnit, setTempUnit, appTheme, setAppTheme } = useSettings();
-  const [notifHeatAlerts, setNotifHeatAlerts] = useState(true);
-  const [notifDailyCheckin, setNotifDailyCheckin] = useState(true);
-  const [notifCommunity, setNotifCommunity] = useState(true);
-  const [notifVolunteer, setNotifVolunteer] = useState(false);
+  const { tempUnit, setTempUnit } = useSettings();
+  const [prefs, setPrefs] = useState<NotificationPrefs>(getNotificationPrefs());
+  const [osNotificationsOn, setOsNotificationsOn] = useState(true);
+
+  // Re-check iPhone notification permission whenever Settings is shown
+  useFocusEffect(useCallback(() => {
+    Notifications.getPermissionsAsync()
+      .then(({ status }) => setOsNotificationsOn(status === 'granted'))
+      .catch(() => {});
+  }, []));
+
+  const toggleHeatAlerts = (value: boolean) => {
+    setPrefs(setNotificationPref('heatAlerts', value));
+  };
+
+  const toggleVehicleReminders = async (value: boolean) => {
+    setPrefs(setNotificationPref('vehicleReminders', value));
+    if (!value) {
+      await cancelVehicleReminders();
+      return;
+    }
+    const snapshot = getWeatherSnapshot();
+    if (snapshot) {
+      const days = getUpcomingDateKeys(snapshot, 5)
+        .map(k => snapshot.daily.find(d => d.dateKey === k))
+        .filter((d): d is NonNullable<typeof d> => !!d)
+        .map(d => ({ dateKey: d.dateKey, highF: d.highF }));
+      await scheduleHotDayVehicleReminders(days);
+    }
+  };
+
+  const openLink = (url: string) => {
+    Linking.openURL(url).catch(() => Alert.alert('Unable to open link', url));
+  };
 
   const handleClearData = () => {
     haptics.warning();
-    Alert.alert('Clear all data?',
-      'This will permanently delete your check-in history, exposure records, and community posts.',
+    Alert.alert(
+      'Clear all data?',
+      'This permanently deletes your heat profile, emergency contacts, medications, hydration and exposure history, and settings from this phone. This can’t be undone.',
       [
         { text: 'Cancel', style: 'cancel' },
-        { text: 'Clear everything', style: 'destructive', onPress: async () => {
-          try { await AsyncStorage.clear(); haptics.success(); Alert.alert('Done', 'All local data has been cleared.'); }
-          catch { haptics.error(); }
-        }},
-      ]
+        {
+          text: 'Clear everything',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              clearAllStores();
+              await AsyncStorage.clear();
+              await Notifications.cancelAllScheduledNotificationsAsync().catch(() => {});
+              haptics.success();
+              router.replace('/onboarding');
+            } catch {
+              haptics.error();
+              Alert.alert('Couldn’t clear everything', 'Please try again.');
+            }
+          },
+        },
+      ],
     );
   };
 
@@ -152,39 +205,55 @@ export default function SettingsScreen() {
           />
         </Section>
 
-        <Section title="Appearance">
-          <SegmentedRow
-            icon="contrast-outline" label="Theme"
-            options={[{ label: 'Light', value: 'light' }, { label: 'Dark', value: 'dark' }, { label: 'Auto', value: 'system' }]}
-            value={appTheme} onChange={(v) => setAppTheme(v as 'light' | 'dark' | 'system')}
+        <Section title="Notifications">
+          {!osNotificationsOn && (
+            <NavRow
+              icon="notifications-off-outline"
+              label="Notifications are off"
+              description="Turn them on in iPhone Settings so heat alerts and reminders can reach you"
+              onPress={() => Linking.openSettings()}
+            />
+          )}
+          <ToggleRow
+            icon="warning-outline"
+            label="Heat alerts"
+            description="Alert when it feels as hot as your profile's threshold"
+            value={prefs.heatAlerts}
+            onChange={toggleHeatAlerts}
+          />
+          <ToggleRow
+            icon="car-outline"
+            label="Hot-day car reminders"
+            description="7:30 AM “look before you lock” on days forecast at 95°F or more"
+            value={prefs.vehicleReminders}
+            onChange={toggleVehicleReminders}
             separator={false}
           />
         </Section>
 
-        <Section title="Notifications">
-          <ToggleRow icon="warning-outline" label="Heat alerts" description="Push notifications when heat index crosses your threshold" value={notifHeatAlerts} onChange={setNotifHeatAlerts} />
-          <ToggleRow icon="calendar-outline" label="Daily check-in reminder" description="Morning reminder to log your wellness" value={notifDailyCheckin} onChange={setNotifDailyCheckin} />
-          <ToggleRow icon="people-outline" label="Community updates" description="Posts and alerts from your neighbors" value={notifCommunity} onChange={setNotifCommunity} />
-          <ToggleRow icon="hand-left-outline" label="Volunteer requests" description="When someone near you needs assistance" value={notifVolunteer} onChange={setNotifVolunteer} separator={false} />
-        </Section>
-
         <Section title="Safety profile">
           <NavRow icon="person-outline" label="Heat profile" description="Age, conditions, activity level" onPress={() => router.push('/profile/heat-profile')} />
-          <NavRow icon="call-outline" label="Emergency contacts" description="Who to notify in an SOS event" onPress={() => router.push('/emergency/contacts')} separator={false} />
+          <NavRow icon="call-outline" label="Emergency contacts" description="Who SOS texts open addressed to" onPress={() => router.push('/emergency/contacts')} separator={false} />
         </Section>
 
         <Section title="Data & privacy">
-          <NavRow icon="document-text-outline" label="Export my data" description="Download a copy of your records" onPress={() => Alert.alert('Export', 'Data export coming soon.')} />
+          <NavRow
+            icon="phone-portrait-outline"
+            label="Your data stays on this phone"
+            description="No account. Only your approximate location is sent to the weather service."
+            onPress={() => openLink(LINKS.privacy)}
+          />
           <NavRow icon="trash-outline" label="Clear all data" destructive onPress={handleClearData} separator={false} />
         </Section>
 
         <Section title="About">
-          <NavRow icon="information-circle-outline" label="About HeatGuard" onPress={() => Alert.alert('HeatGuard', 'Version 1.0.0 — Built for heat-vulnerable communities.')} />
-          <NavRow icon="shield-checkmark-outline" label="Privacy policy" onPress={() => {}} />
-          <NavRow icon="document-outline" label="Terms of use" onPress={() => {}} separator={false} />
+          <NavRow icon="medkit-outline" label="Safety & medical disclaimer" onPress={() => router.push('/disclaimer')} />
+          <NavRow icon="shield-checkmark-outline" label="Privacy policy" onPress={() => openLink(LINKS.privacy)} />
+          <NavRow icon="document-outline" label="Terms of use" onPress={() => openLink(LINKS.terms)} />
+          <NavRow icon="mail-outline" label="Contact support" onPress={() => openLink(LINKS.support)} separator={false} />
         </Section>
 
-        <Text style={styles.versionText}>HeatGuard 1.0.0 · com.tarnaka.heatguard</Text>
+        <Text style={styles.versionText}>HeatGuard 1.0.0 · Weather data by Open-Meteo.com</Text>
       </ScrollView>
     </View>
   );

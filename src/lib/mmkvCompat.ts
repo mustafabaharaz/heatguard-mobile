@@ -68,3 +68,27 @@ export class MMKV {
     this.store.clearAll();
   }
 }
+
+/**
+ * Every storage id the app uses. Clearing these (plus AsyncStorage) wipes all
+ * personal data on the device — used by Settings → Clear all data.
+ */
+export const ALL_STORE_IDS = [
+  DEFAULT_ID,
+  'profile-storage',
+  'forecast-storage',
+  'medication-storage',
+  'preparedness-storage',
+  'exposure-storage',
+  'settings-storage',
+];
+
+export function clearAllStores(): void {
+  for (const id of ALL_STORE_IDS) {
+    try {
+      getInstance(id).clearAll();
+    } catch {
+      // keep going — clear as much as possible
+    }
+  }
+}

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Tabs } from 'expo-router';
+import { Tabs, Redirect } from 'expo-router';
 import {
   Animated,
   Platform,
@@ -10,6 +10,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import haptics from '../../src/utils/haptics';
+import { hasAcceptedDisclaimer } from '../../src/features/settings/appPrefs';
 
 // ─── Badge ────────────────────────────────────────────────────────────────────
 
@@ -175,6 +176,11 @@ export default function TabLayout() {
   const [thermalColor, setThermalColor] = useState<string>('#1D3557');
 
   const insets = useSafeAreaInsets();
+
+  // First launch (or updated safety notice): show onboarding + disclaimer first
+  if (!hasAcceptedDisclaimer()) {
+    return <Redirect href="/onboarding" />;
+  }
 
   return (
     <Tabs
