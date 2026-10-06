@@ -1,8 +1,9 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // FILE: src/features/profile/storage/profileStorage.ts
 // HeatGuard · Heat Profile storage
-// Adds "Who are you protecting?" answers (household fields). Older saved
-// profiles load fine: missing fields fall back to the defaults below.
+// Includes the "Home & lifestyle" answers (car riders, outdoor work, living
+// alone, home AC). Older saved profiles load fine: missing fields fall back to
+// the defaults below.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { Platform } from 'react-native';
@@ -20,17 +21,19 @@ export interface HeatProfile {
   isElderly: boolean;
   takesMedications: boolean;
   profileComplete: boolean;
-  // ── Household ("Who are you protecting?") ──
+  // ── Home & lifestyle ──
   drivesWithKids: boolean;
   drivesWithPets: boolean;
   worksOutdoors: boolean;
   livesAlone: boolean;
+  noAC: boolean;
+  acUnreliable: boolean;
   householdAnswered: boolean;
 }
 
 export type HouseholdAnswers = Pick<
   HeatProfile,
-  'drivesWithKids' | 'drivesWithPets' | 'worksOutdoors' | 'livesAlone'
+  'drivesWithKids' | 'drivesWithPets' | 'worksOutdoors' | 'livesAlone' | 'noAC' | 'acUnreliable'
 >;
 
 const DEFAULT_PROFILE: HeatProfile = {
@@ -48,6 +51,8 @@ const DEFAULT_PROFILE: HeatProfile = {
   drivesWithPets: false,
   worksOutdoors: false,
   livesAlone: false,
+  noAC: false,
+  acUnreliable: false,
   householdAnswered: false,
 };
 
@@ -95,6 +100,18 @@ export function clearHeatProfile() {
   }
 }
 
+/** Current "Home & lifestyle" answers. */
+export function getHouseholdAnswers(p: HeatProfile = getHeatProfile()): HouseholdAnswers {
+  return {
+    drivesWithKids: p.drivesWithKids,
+    drivesWithPets: p.drivesWithPets,
+    worksOutdoors: p.worksOutdoors,
+    livesAlone: p.livesAlone,
+    noAC: p.noAC,
+    acUnreliable: p.acUnreliable,
+  };
+}
+
 /** Save only the household answers, keeping the rest of the profile as is. */
 export function saveHouseholdAnswers(answers: HouseholdAnswers) {
   saveHeatProfile({ ...getHeatProfile(), ...answers, householdAnswered: true });
@@ -103,6 +120,11 @@ export function saveHouseholdAnswers(answers: HouseholdAnswers) {
 /** True if kids or pets ever ride in the user's car. */
 export function hasVehicleDependents(p: HeatProfile): boolean {
   return p.drivesWithKids || p.drivesWithPets;
+}
+
+/** True if home cooling can't be counted on. */
+export function hasCoolingRisk(p: HeatProfile): boolean {
+  return p.noAC || p.acUnreliable;
 }
 
 export function getRiskMultiplier(p: HeatProfile): number {
@@ -114,5 +136,7 @@ export function getRiskMultiplier(p: HeatProfile): number {
   if (p.takesMedications) m += 0.15;
   if (p.activityLevel === 'high') m += 0.2;
   if (p.activityLevel === 'low') m -= 0.1;
+  if (p.noAC) m += 0.25;
+  else if (p.acUnreliable) m += 0.1;
   return Math.min(m, 2.0);
 }

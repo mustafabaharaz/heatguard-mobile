@@ -1,158 +1,238 @@
-import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Switch, Alert } from 'react-native';
-import { StatusBar } from 'expo-status-bar';
-import { Bell, User, Settings, Shield, ChevronRight, Heart } from 'lucide-react-native';
-import { useState, useEffect, useCallback } from 'react';
-import { useRouter, useFocusEffect } from 'expo-router';
-import { getContacts } from '../../src/features/emergency/storage/contactStorage';
-import { getHeatProfile } from '../../src/features/profile/storage/profileStorage';
+// ─────────────────────────────────────────────────────────────────────────────
+// FILE: app/(tabs)/profile.tsx
+// HeatGuard · Profile
+//  - Heat profile (health, age, alert level)
+//  - Who I'm protecting (dependents)
+//  - Home & lifestyle answers
+//  - Emergency contacts
+//  - Notifications & settings, app info
+// Skins: High Sun (light) / Night Shift (dark).
+// ─────────────────────────────────────────────────────────────────────────────
 
-const COLORS = {
-  ocean: '#1D3557', glacier: '#8ECAE6', lava: '#E63946',
-  safe: '#2D9B6F', bg: '#F9FAFB', border: '#E5E7EB', muted: '#6B7280',
+import React, { useState, useCallback } from 'react';
+import { View, Text, ScrollView, Pressable, StyleSheet } from 'react-native';
+import { StatusBar } from 'expo-status-bar';
+import { useRouter, useFocusEffect } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import {
+  HeartPulse, Users, Home, Phone, Settings, ChevronRight, UserRound,
+} from 'lucide-react-native';
+import { useSettings } from '../../src/context/SettingsContext';
+import { getContacts } from '../../src/features/emergency/storage/contactStorage';
+import { getHeatProfile, type HeatProfile } from '../../src/features/profile/storage/profileStorage';
+import { getDependents, joinNames, type Dependent } from '../../src/features/profile/storage/dependentsStorage';
+import { getDailyCheckIn, formatCheckInTime } from '../../src/features/checkin/dailyCheckIn';
+
+const SKIN = {
+  light: {
+    bg: '#F4F4F0',
+    card: '#FFFFFF',
+    border: '#0A0A0A',
+    divider: '#E2E2DC',
+    text: '#0A0A0A',
+    muted: '#3F3F3A',
+    accent: '#0B4FD6',
+    onAccent: '#FFFFFF',
+    badgeBg: '#FFF4CC',
+    badgeText: '#5C4300',
+    pressed: '#ECECE6',
+    avatarBg: '#0A0A0A',
+    avatarIcon: '#FFFFFF',
+  },
+  dark: {
+    bg: '#0B1220',
+    card: '#131C2E',
+    border: '#24314F',
+    divider: '#24314F',
+    text: '#F1F5F9',
+    muted: '#A3B1C9',
+    accent: '#38BDF8',
+    onAccent: '#04121F',
+    badgeBg: '#2A2410',
+    badgeText: '#FBBF24',
+    pressed: '#1A2540',
+    avatarBg: '#1A2540',
+    avatarIcon: '#38BDF8',
+  },
 };
+
+type Skin = typeof SKIN.light;
+
+function householdSummary(p: HeatProfile): string {
+  if (!p.householdAnswered) return 'Not answered yet';
+  const parts: string[] = [];
+  if (p.worksOutdoors) parts.push('Works or exercises outdoors');
+  if (p.livesAlone) parts.push('Lives alone');
+  if (p.noAC) parts.push('No AC');
+  else if (p.acUnreliable) parts.push('Unreliable AC');
+  const ci = getDailyCheckIn();
+  parts.push(ci.enabled ? `Daily check-in ${formatCheckInTime(ci)}` : 'Daily check-in off');
+  return parts.join(' · ');
+}
+
+interface RowProps {
+  icon: React.ReactNode;
+  title: string;
+  sub: string;
+  onPress: () => void;
+  badge?: string;
+  last?: boolean;
+  c: Skin;
+}
+
+function Row({ icon, title, sub, onPress, badge, last, c }: RowProps) {
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`${title}. ${sub}${badge ? `. ${badge}` : ''}`}
+      style={({ pressed }) => [
+        styles.row,
+        {
+          backgroundColor: pressed ? c.pressed : 'transparent',
+          borderBottomColor: c.divider,
+          borderBottomWidth: last ? 0 : 1,
+        },
+      ]}
+    >
+      {icon}
+      <View style={styles.rowText}>
+        <Text style={[styles.rowTitle, { color: c.text }]}>{title}</Text>
+        <Text style={[styles.rowSub, { color: c.muted }]} numberOfLines={2}>{sub}</Text>
+      </View>
+      {badge ? (
+        <View style={[styles.badge, { backgroundColor: c.badgeBg }]}>
+          <Text style={[styles.badgeText, { color: c.badgeText }]}>{badge}</Text>
+        </View>
+      ) : null}
+      <ChevronRight size={20} color={c.muted} />
+    </Pressable>
+  );
+}
 
 export default function ProfileScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
+  const { isDark, formatTemp } = useSettings();
+  const c: Skin = isDark ? SKIN.dark : SKIN.light;
+  const borderWidth = isDark ? 1 : 2;
+
+  const [profile, setProfile] = useState<HeatProfile>(getHeatProfile());
+  const [dependents, setDependents] = useState<Dependent[]>([]);
   const [contactCount, setContactCount] = useState(0);
-  const [heatProfile, setHeatProfile] = useState(getHeatProfile());
 
-
-  // Refresh every time this tab comes into view (tabs stay mounted)
+  // Tabs stay mounted: refresh every time Profile comes into view
   useFocusEffect(useCallback(() => {
-    setHeatProfile(getHeatProfile());
-    setContactCount(getContacts().length);
+    setProfile(getHeatProfile());
+    setDependents(getDependents());
+    try { setContactCount(getContacts().length); } catch { setContactCount(0); }
   }, []));
 
-
-  const profileName = heatProfile.profileComplete ? heatProfile.name : 'Volunteer';
-  const profileSub = heatProfile.profileComplete
-    ? `Age ${heatProfile.age} · Alert at ${heatProfile.alertThreshold}°C`
-    : 'Set up your heat profile';
+  const name = profile.name.trim() || 'Your profile';
+  const heatSub = profile.profileComplete
+    ? `Age ${profile.age} · alerts at ${formatTemp(profile.alertThreshold)}`
+    : 'Add your age and health for personal risk';
+  const depSub = dependents.length
+    ? joinNames(dependents.map(d => d.name))
+    : 'Add kids, pets or family you look after';
 
   return (
-    <View style={styles.container}>
-      <StatusBar style="light" />
-      <ScrollView style={styles.scrollView} contentContainerStyle={styles.content}>
-
+    <View style={[styles.container, { backgroundColor: c.bg }]}>
+      <StatusBar style={isDark ? 'light' : 'dark'} />
+      <ScrollView contentContainerStyle={[styles.content, { paddingTop: insets.top + 16 }]}>
+        {/* ── Header ───────────────────────────────────────────────────────── */}
         <View style={styles.header}>
-          <View style={styles.avatarContainer}>
-            <User size={48} color="white" />
+          <View style={[styles.avatar, { backgroundColor: c.avatarBg }]}>
+            <UserRound size={30} color={c.avatarIcon} />
           </View>
-          <Text style={styles.userName}>{profileName}</Text>
-          <Text style={styles.userRole}>{profileSub}</Text>
-          {heatProfile.profileComplete && (
-            <View style={styles.profileBadge}>
-              <Text style={styles.profileBadgeText}>✓ Profile Complete</Text>
-            </View>
-          )}
+          <View style={styles.flex1}>
+            <Text style={[styles.name, { color: c.text }]} accessibilityRole="header" numberOfLines={1}>{name}</Text>
+            <Text style={[styles.headerSub, { color: c.muted }]}>Everything here stays on this phone.</Text>
+          </View>
         </View>
 
-        {/* Heat Profile Card */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Heart size={20} color={COLORS.ocean} />
-            <Text style={styles.sectionTitle}>Heat Profile</Text>
-          </View>
-          <TouchableOpacity style={styles.menuItem} onPress={() => router.push('/profile/heat-profile')}>
-            <View style={styles.menuItemLeft}>
-              <Text style={styles.menuItemText}>Personal Heat Profile</Text>
-              <Text style={styles.menuItemSub}>
-                {heatProfile.profileComplete
-                  ? `Activity: ${heatProfile.activityLevel} · ${heatProfile.alertThreshold}°C alert`
-                  : 'Personalize your heat risk alerts'}
-              </Text>
-            </View>
-            <View style={styles.menuItemRight}>
-              {!heatProfile.profileComplete && (
-                <View style={styles.setupBadge}>
-                  <Text style={styles.setupBadgeText}>Set Up</Text>
-                </View>
-              )}
-              <ChevronRight size={20} color="#9CA3AF" />
-            </View>
-          </TouchableOpacity>
+        {/* ── You ──────────────────────────────────────────────────────────── */}
+        <Text style={[styles.sectionLabel, { color: c.muted }]}>You</Text>
+        <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border, borderWidth }]}>
+          <Row
+            c={c}
+            icon={<HeartPulse size={24} color={c.text} />}
+            title="Heat profile"
+            sub={heatSub}
+            badge={profile.profileComplete ? undefined : 'Set up'}
+            onPress={() => router.push('/profile/heat-profile')}
+          />
+          <Row
+            c={c}
+            icon={<Home size={24} color={c.text} />}
+            title="Home & lifestyle"
+            sub={householdSummary(profile)}
+            badge={profile.householdAnswered ? undefined : 'Answer'}
+            onPress={() => router.push('/profile/household')}
+            last
+          />
         </View>
 
-        {/* Notifications live in Settings */}
-        <View style={styles.section}>
-          <TouchableOpacity
-            style={styles.menuItem}
+        {/* ── People ───────────────────────────────────────────────────────── */}
+        <Text style={[styles.sectionLabel, { color: c.muted }]}>People</Text>
+        <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border, borderWidth }]}>
+          <Row
+            c={c}
+            icon={<Users size={24} color={c.text} />}
+            title="Who I'm protecting"
+            sub={depSub}
+            onPress={() => router.push('/profile/dependents')}
+          />
+          <Row
+            c={c}
+            icon={<Phone size={24} color={c.text} />}
+            title="Emergency contacts"
+            sub={contactCount ? `${contactCount} ${contactCount === 1 ? 'contact' : 'contacts'} · used by SOS` : 'Needed so SOS can reach someone'}
+            badge={contactCount ? undefined : 'Add'}
+            onPress={() => router.push('/emergency/contacts')}
+            last
+          />
+        </View>
+
+        {/* ── App ──────────────────────────────────────────────────────────── */}
+        <Text style={[styles.sectionLabel, { color: c.muted }]}>App</Text>
+        <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border, borderWidth }]}>
+          <Row
+            c={c}
+            icon={<Settings size={24} color={c.text} />}
+            title="Notifications & settings"
+            sub="Alerts, units, appearance"
             onPress={() => router.push('/settings')}
-            accessibilityRole="button"
-            accessibilityLabel="Notifications and app settings"
-          >
-            <View style={styles.sectionHeader}>
-              <Bell size={20} color={COLORS.ocean} />
-              <Text style={styles.sectionTitle}>Notifications & settings</Text>
-            </View>
-            <ChevronRight size={20} color="#9CA3AF" />
-          </TouchableOpacity>
+            last
+          />
         </View>
 
-        {/* Safety */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Shield size={20} color={COLORS.ocean} />
-            <Text style={styles.sectionTitle}>Safety Settings</Text>
-          </View>
-          <TouchableOpacity style={styles.menuItem} onPress={() => router.push('/emergency/contacts')}>
-            <Text style={styles.menuItemText}>Emergency Contacts</Text>
-            <View style={styles.menuItemRight}>
-              <Text style={styles.menuItemValue}>{contactCount} {contactCount === 1 ? 'contact' : 'contacts'}</Text>
-              <ChevronRight size={20} color="#9CA3AF" />
-            </View>
-          </TouchableOpacity>
-        </View>
-
-        {/* App Info */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Settings size={20} color={COLORS.ocean} />
-            <Text style={styles.sectionTitle}>App Information</Text>
-          </View>
-          <View style={styles.infoRow}><Text style={styles.infoLabel}>Version</Text><Text style={styles.infoValue}>1.0.0</Text></View>
-          <View style={styles.infoRow}><Text style={styles.infoLabel}>Build</Text><Text style={styles.infoValue}>Beta</Text></View>
-        </View>
-
-        <View style={styles.aboutContainer}>
-          <Text style={styles.aboutTitle}>🛡️ HeatGuard</Text>
-          <Text style={styles.aboutText}>Lifesaving heat emergency monitoring for vulnerable populations.</Text>
-        </View>
-
+        <Text style={[styles.about, { color: c.muted }]}>
+          HeatGuard 1.0 (beta){'\n'}Heat safety for you and the people you look after.{'\n'}Not a medical device. In an emergency, call 911.
+        </Text>
       </ScrollView>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: COLORS.bg },
-  scrollView: { flex: 1 },
-  content: { paddingBottom: 40 },
-  header: { backgroundColor: COLORS.ocean, alignItems: 'center', paddingTop: 60, paddingBottom: 32 },
-  avatarContainer: { width: 80, height: 80, borderRadius: 40, backgroundColor: COLORS.glacier, alignItems: 'center', justifyContent: 'center', marginBottom: 16 },
-  userName: { fontSize: 24, fontWeight: 'bold', color: 'white' },
-  userRole: { fontSize: 15, color: 'rgba(255,255,255,0.8)', marginTop: 4 },
-  profileBadge: { marginTop: 10, backgroundColor: COLORS.safe, paddingHorizontal: 12, paddingVertical: 4, borderRadius: 20 },
-  profileBadgeText: { color: 'white', fontSize: 13, fontWeight: '600' },
-  section: { backgroundColor: 'white', marginTop: 16, paddingVertical: 8 },
-  sectionHeader: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 12, gap: 8 },
-  sectionTitle: { fontSize: 18, fontWeight: '600', color: COLORS.ocean },
-  settingRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 16, borderTopWidth: 1, borderTopColor: '#F3F4F6' },
-  settingInfo: { flex: 1, marginRight: 16 },
-  settingLabel: { fontSize: 16, fontWeight: '500', color: COLORS.ocean, marginBottom: 4 },
-  settingDescription: { fontSize: 14, color: '#6B7280', lineHeight: 20 },
-  menuItem: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 14, borderTopWidth: 1, borderTopColor: '#F3F4F6' },
-  menuItemLeft: { flex: 1, marginRight: 12 },
-  menuItemText: { fontSize: 16, color: COLORS.ocean, fontWeight: '500' },
-  menuItemSub: { fontSize: 13, color: '#6B7280', marginTop: 2 },
-  menuItemRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  menuItemValue: { fontSize: 14, color: '#6B7280' },
-  setupBadge: { backgroundColor: COLORS.lava, paddingHorizontal: 10, paddingVertical: 3, borderRadius: 10 },
-  setupBadgeText: { color: 'white', fontSize: 12, fontWeight: '600' },
-  infoRow: { flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 12, borderTopWidth: 1, borderTopColor: '#F3F4F6' },
-  infoLabel: { fontSize: 14, color: '#6B7280' },
-  infoValue: { fontSize: 14, color: COLORS.ocean, fontWeight: '500' },
-  aboutContainer: { marginTop: 32, paddingHorizontal: 20, alignItems: 'center' },
-  aboutTitle: { fontSize: 20, fontWeight: 'bold', color: COLORS.ocean, marginBottom: 8 },
-  aboutText: { fontSize: 14, color: '#6B7280', textAlign: 'center', lineHeight: 22 },
+  container: { flex: 1 },
+  content: { paddingHorizontal: 20, paddingBottom: 40, gap: 10 },
+  flex1: { flex: 1 },
+
+  header: { flexDirection: 'row', alignItems: 'center', gap: 14, marginBottom: 6 },
+  avatar: { width: 60, height: 60, borderRadius: 30, alignItems: 'center', justifyContent: 'center' },
+  name: { fontSize: 26, fontWeight: '800', letterSpacing: -0.3 },
+  headerSub: { fontSize: 14, marginTop: 2 },
+
+  sectionLabel: { fontSize: 13, fontWeight: '800', letterSpacing: 0.8, textTransform: 'uppercase', marginTop: 8 },
+  card: { borderRadius: 16, overflow: 'hidden' },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 16, paddingVertical: 12, minHeight: 68 },
+  rowText: { flex: 1, gap: 2 },
+  rowTitle: { fontSize: 17, fontWeight: '800' },
+  rowSub: { fontSize: 14, lineHeight: 19 },
+  badge: { borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4 },
+  badgeText: { fontSize: 13, fontWeight: '800' },
+
+  about: { fontSize: 13, lineHeight: 19, textAlign: 'center', marginTop: 20 },
 });

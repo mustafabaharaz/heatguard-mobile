@@ -2,11 +2,11 @@
 // FILE: app/(tabs)/index.tsx
 // HeatGuard · Home
 //  - Compact color-coded temperature chip (taps through to the forecast)
-//  - One-line heat summary + personal risk
+//  - Two-line heat summary: what to do + your personal risk
 //  - "Needs your attention" card (one item at a time, most urgent first)
 //  - Quick tiles: Hydration (+1 cup) and Vehicle check (only if kids/pets ride
 //    along; otherwise the offline Emergency card)
-//  - Plan + a short list of tools
+//  - A short list of tools; last-updated time at the bottom
 // Skins: High Sun (light) / Night Shift (dark). SOS lives in the tab bar.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -16,8 +16,8 @@ import { StatusBar } from 'expo-status-bar';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
-  Droplet, Car, Plus, Bell, ChevronRight, Settings, CalendarDays, LifeBuoy,
-  Newspaper, Snowflake, Activity, UserRound,
+  Droplet, Car, Plus, Bell, ChevronRight, Settings, LifeBuoy,
+  Newspaper, Snowflake, Activity, UserRound, MapPin,
 } from 'lucide-react-native';
 import haptics from '../../src/utils/haptics';
 import { useSettings } from '../../src/context/SettingsContext';
@@ -30,10 +30,9 @@ import {
 } from '../../src/services/notifications/push';
 import { getNotificationPrefs } from '../../src/features/settings/appPrefs';
 import {
-  getHeatProfile, getRiskMultiplier, hasVehicleDependents, type HeatProfile,
+  getHeatProfile, getRiskMultiplier, hasVehicleDependents, hasCoolingRisk, type HeatProfile,
 } from '../../src/features/profile/storage/profileStorage';
 import { PassiveTracker } from '../../src/features/exposure/passiveTracker';
-import MedicationWarningCard from '../../src/components/medications/MedicationWarningCard';
 import {
   calculateHydrationTarget, computeHydrationSummary, mlToOz, type HydrationSummary,
 } from '../../src/features/hydration/hydrationEngine';
@@ -45,6 +44,14 @@ import {
   getActiveVehicleSession, dismissVehicleSession, type VehicleSession,
 } from '../../src/features/vehicle/vehicleAlertEngine';
 import { getContacts } from '../../src/features/emergency/storage/contactStorage';
+import { carRiderNames, joinNames } from '../../src/features/profile/storage/dependentsStorage';
+import {
+  getCheckInStatus, confirmToday, planDailyCheckIns, isSuggestionDismissed, dismissSuggestion, formatCheckInTime,
+} from '../../src/features/checkin/dailyCheckIn';
+import { textContacts } from '../../src/features/emergency/emergencyMessaging';
+import {
+  getActiveTrip, endTrip, isTripOverdue, formatClock, type Trip,
+} from '../../src/features/plan/tripCheckIn';
 
 // ─── Skins ────────────────────────────────────────────────────────────────────
 
@@ -157,14 +164,14 @@ const PERSONAL_LABEL: Record<Personal, string> = {
 
 function riskReasons(p: HeatProfile): string {
   const r: string[] = [];
-  if (p.isElderly) r.push('your age');
-  if (p.hasHeartDisease) r.push('your heart condition');
+  if (p.isElderly) r.push('age');
+  if (p.hasHeartDisease) r.push('heart');
   if (p.hasDiabetes) r.push('diabetes');
-  if (p.hasRespiratoryIssues) r.push('breathing issues');
-  if (p.takesMedications) r.push('your medications');
-  if (r.length === 0) return '';
-  if (r.length === 1) return `Raised by ${r[0]}.`;
-  return `Raised by ${r.slice(0, -1).join(', ')} and ${r[r.length - 1]}.`;
+  if (p.hasRespiratoryIssues) r.push('breathing');
+  if (p.takesMedications) r.push('medications');
+  if (p.noAC) r.push('no AC');
+  else if (p.acUnreliable) r.push('unreliable AC');
+  return r.join(', ');
 }
 
 function greeting(): string {
@@ -200,6 +207,8 @@ export default function HomeScreen() {
   const [hydration, setHydration] = useState<HydrationSummary | null>(null);
   const [vehicleSession, setVehicleSession] = useState<VehicleSession | null>(null);
   const [contactCount, setContactCount] = useState<number>(0);
+  const [trip, setTrip] = useState<Trip | null>(null);
+  const [riders, setRiders] = useState<string[]>([]);
   const [, setTick] = useState(0);
   const lastAlertTemp = useRef<number>(0);
 
@@ -226,6 +235,9 @@ export default function HomeScreen() {
     const p = getHeatProfile();
     setProfile(p);
     setVehicleSession(getActiveVehicleSession());
+    setTrip(getActiveTrip());
+    setRiders(carRiderNames());
+    planDailyCheckIns().catch(() => {});
     try { setContactCount(getContacts().length); } catch { setContactCount(0); }
     recomputeHydration();
 
@@ -248,12 +260,11 @@ export default function HomeScreen() {
     }
   }, [todayHighF, recomputeHydration]));
 
-  // Tick the vehicle timer display while a session is running
+  // Tick the display while a vehicle timer or trip check-in is running
   useEffect(() => {
-    if (!vehicleSession) return;
-    const id = setInterval(() => setTick(t => t + 1), 30_000);
+    const id = setInterval(() => setTick(t => t + 1), vehicleSession || trip ? 30_000 : 60_000);
     return () => clearInterval(id);
-  }, [vehicleSession]);
+  }, [vehicleSession, trip]);
 
   // React to each new weather reading: exposure tracker + heat alerts
   useEffect(() => {
@@ -281,7 +292,7 @@ export default function HomeScreen() {
   // car (or who haven't answered yet). Re-planned when the forecast updates.
   useEffect(() => {
     if (!snapshot) return;
-    if (profile.householdAnswered && !hasVehicleDependents(profile)) {
+    if (profile.householdAnswered && !hasVehicleDependents(profile) && riders.length === 0) {
       cancelVehicleReminders();
       return;
     }
@@ -289,8 +300,8 @@ export default function HomeScreen() {
       .map(dateKey => snapshot.daily.find(d => d.dateKey === dateKey))
       .filter((d): d is NonNullable<typeof d> => !!d)
       .map(d => ({ dateKey: d.dateKey, highF: d.highF }));
-    scheduleHotDayVehicleReminders(days);
-  }, [snapshot?.fetchedAt, profile.householdAnswered, profile.drivesWithKids, profile.drivesWithPets]);
+    scheduleHotDayVehicleReminders(days, riders);
+  }, [snapshot?.fetchedAt, profile.householdAnswered, profile.drivesWithKids, profile.drivesWithPets, riders.join('|')]);
 
   // Refresh weather every 15 minutes while Home is mounted
   useEffect(() => {
@@ -354,7 +365,12 @@ export default function HomeScreen() {
   const firstName = profile.name.trim().split(' ')[0];
   const personal = personalRisk(tempC, getRiskMultiplier(profile));
   const reasons = riskReasons(profile);
-  const showVehicle = hasVehicleDependents(profile);
+  const showVehicle = hasVehicleDependents(profile) || riders.length > 0;
+  const coolingRisk = hasCoolingRisk(profile);
+  const checkInStatus = getCheckInStatus();
+  const riderText = riders.length
+    ? `${joinNames(riders)} aboard?`
+    : `${profile.drivesWithKids && profile.drivesWithPets ? 'Kids & pets' : profile.drivesWithKids ? 'Kids' : 'Pets'} aboard?`;
 
   const vehicleMinutes = vehicleSession
     ? Math.max(0, Math.floor((Date.now() - new Date(vehicleSession.startTime).getTime()) / 60_000))
@@ -378,6 +394,44 @@ export default function HomeScreen() {
       },
       secondary: { label: 'Open timer', onPress: () => router.push('/vehicle/alert') },
     };
+  } else if (trip && isTripOverdue(trip)) {
+    attention = {
+      urgent: true,
+      title: 'Trip check-in: are you OK?',
+      body: `You planned to be back from ${trip.activityLabel.toLowerCase()} by ${formatClock(trip.checkAt)}.`,
+      primary: {
+        label: "I'm OK",
+        onPress: async () => { await endTrip(); setTrip(null); haptics.selection(); },
+      },
+      secondary: {
+        label: 'Text my contacts',
+        onPress: () => { textContacts(`I went out for ${trip.activityLabel.toLowerCase()} and may need help.`); },
+      },
+    };
+  } else if (trip) {
+    attention = {
+      urgent: false,
+      title: `${trip.activityLabel} · check-in at ${formatClock(trip.checkAt)}`,
+      body: 'HeatGuard will check on you then. Tap below when you are back.',
+      primary: {
+        label: "I'm back safe",
+        onPress: async () => { await endTrip(); setTrip(null); haptics.selection(); },
+      },
+    };
+  } else if (checkInStatus === 'due') {
+    attention = {
+      urgent: true,
+      title: 'Daily check-in: are you OK?',
+      body: `Your check-in was at ${formatCheckInTime()}. Tap below so HeatGuard knows you are safe.`,
+      primary: {
+        label: "I'm OK",
+        onPress: async () => { await confirmToday(); haptics.selection(); setTick(t => t + 1); },
+      },
+      secondary: {
+        label: 'Text my contacts',
+        onPress: () => { textContacts('I missed my HeatGuard daily check-in and may need help.'); },
+      },
+    };
   } else if (!profile.householdAnswered) {
     attention = {
       urgent: false,
@@ -394,14 +448,18 @@ export default function HomeScreen() {
         : 'So SOS can text someone your location if you need help.',
       primary: { label: 'Add a contact', onPress: () => router.push('/emergency/contacts') },
     };
-  } else if (hydration && (hydration.status === 'behind' || hydration.status === 'critical')) {
+  } else if ((profile.livesAlone || coolingRisk) && checkInStatus === 'off' && !isSuggestionDismissed()) {
     attention = {
-      urgent: hydration.status === 'critical',
-      title: 'Time for water',
-      body: `${remainingOz} oz to go today.`,
-      primary: { label: 'I drank a cup', onPress: addCup },
+      urgent: false,
+      title: 'Turn on a daily check-in',
+      body: profile.livesAlone
+        ? 'You live alone. A daily "Are you OK?" makes it easy to reach someone if the heat gets to you.'
+        : 'Your home cooling may not be reliable. A daily "Are you OK?" makes it easy to reach someone if it fails.',
+      primary: { label: 'Set it up', onPress: () => router.push('/profile/household') },
+      secondary: { label: 'Not now', onPress: () => { dismissSuggestion(); setTick(t => t + 1); } },
     };
   }
+  const hydrationBehind = !!hydration && (hydration.status === 'behind' || hydration.status === 'critical');
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
@@ -412,13 +470,8 @@ export default function HomeScreen() {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={c.muted} />}
       >
         {/* ── Header ───────────────────────────────────────────────────────── */}
-        <View style={styles.header}>
-          <View style={styles.headerText}>
-            <Text style={[styles.location, { color: c.muted }]} numberOfLines={1}>{locationName}</Text>
-            <Text style={[styles.greeting, { color: c.text }]} accessibilityRole="header" numberOfLines={1}>
-              {firstName ? `${greeting()}, ${firstName}` : greeting()}
-            </Text>
-          </View>
+        <View style={styles.topRow}>
+          <Text style={[styles.location, { color: c.muted }]} numberOfLines={1}>{locationName}</Text>
           <Pressable
             onPress={() => router.push('/settings')}
             accessibilityRole="button"
@@ -428,6 +481,15 @@ export default function HomeScreen() {
           >
             <Settings size={22} color={c.muted} />
           </Pressable>
+        </View>
+        <View style={styles.header}>
+          <Text
+            style={[styles.greeting, { color: c.text }]}
+            accessibilityRole="header"
+            numberOfLines={2}
+          >
+            {firstName ? `${greeting()},\n${firstName}` : greeting()}
+          </Text>
           <Pressable
             onPress={() => router.push('/intelligence/forecast')}
             accessibilityRole="button"
@@ -452,14 +514,20 @@ export default function HomeScreen() {
           ]}
         >
           <Text style={[styles.summaryText, { color: c.text }]}>{LEVEL_SUMMARY[level]}</Text>
-          <Text style={[styles.summaryMeta, { color: c.muted }]}>
-            Feels like {formatTemp(feelsC)}{todayHighF !== null ? ` · High ${formatTemp(Math.round(fToC(todayHighF)))}` : ''} · {updatedLabel}
-          </Text>
           {profile.profileComplete ? (
-            <Text style={[styles.personal, { color: c.text }]}>
-              Your risk today: <Text style={styles.personalStrong}>{PERSONAL_LABEL[personal]}</Text>
-              {reasons ? <Text style={{ color: c.muted }}> · {reasons}</Text> : null}
-            </Text>
+            <Pressable
+              onPress={profile.takesMedications ? () => router.push('/profile/medications') : undefined}
+              disabled={!profile.takesMedications}
+              accessibilityRole={profile.takesMedications ? 'button' : 'text'}
+              accessibilityHint={profile.takesMedications ? 'Opens medication heat tips' : undefined}
+              style={styles.personalRow}
+            >
+              <Text style={[styles.personal, { color: c.text }]}>
+                Your risk: <Text style={styles.personalStrong}>{PERSONAL_LABEL[personal]}</Text>
+                {reasons ? <Text style={{ color: c.muted }}> · {reasons}</Text> : null}
+              </Text>
+              {profile.takesMedications && <ChevronRight size={18} color={c.muted} />}
+            </Pressable>
           ) : (
             <Pressable
               onPress={() => router.push('/profile/heat-profile')}
@@ -548,6 +616,9 @@ export default function HomeScreen() {
             <View style={[styles.track, { backgroundColor: c.track }]}>
               <View style={[styles.trackFill, { width: `${hydrationPct}%`, backgroundColor: c.accent }]} />
             </View>
+            {hydrationBehind && (
+              <Text style={[styles.tileNudge, { color: c.urgentLabel }]}>Drink a cup now</Text>
+            )}
           </Pressable>
 
           {showVehicle ? (
@@ -565,8 +636,22 @@ export default function HomeScreen() {
               <Text style={[styles.tileSub, { color: c.muted }]}>
                 {vehicleSession
                   ? `Timer running · ${vehicleMinutes} min`
-                  : `${profile.drivesWithKids && profile.drivesWithPets ? 'Kids & pets' : profile.drivesWithKids ? 'Kids' : 'Pets'} aboard? Start a timer when you park.`}
+                  : `${riderText} Start a timer when you park.`}
               </Text>
+            </Pressable>
+          ) : coolingRisk ? (
+            <Pressable
+              onPress={() => router.push('/map')}
+              accessibilityRole="button"
+              accessibilityLabel="Cool Spots. Cooling centers near you"
+              style={({ pressed }) => [
+                styles.tile,
+                { backgroundColor: pressed ? c.pressed : c.card, borderColor: c.border, borderWidth },
+              ]}
+            >
+              <MapPin size={26} color={c.accent} />
+              <Text style={[styles.tileTitle, { color: c.text }]}>Cool Spots</Text>
+              <Text style={[styles.tileSub, { color: c.muted }]}>Cooling centers near you, with hours and directions.</Text>
             </Pressable>
           ) : (
             <Pressable
@@ -585,38 +670,15 @@ export default function HomeScreen() {
           )}
         </View>
 
-        {/* ── Medication warnings (only if relevant) ───────────────────────── */}
-        {profile.takesMedications && (
-          <MedicationWarningCard tempC={tempC} takesMedications={profile.takesMedications} />
-        )}
-
-        {/* ── Plan ─────────────────────────────────────────────────────────── */}
-        <Pressable
-          onPress={() => router.push('/plan')}
-          accessibilityRole="button"
-          style={({ pressed }) => [
-            styles.row,
-            { backgroundColor: pressed ? c.pressed : c.card, borderColor: c.border, borderWidth },
-          ]}
-        >
-          <CalendarDays size={24} color={c.text} />
-          <View style={styles.rowText}>
-            <Text style={[styles.rowTitle, { color: c.text }]}>Plan outdoor time</Text>
-            <Text style={[styles.rowSub, { color: c.muted }]}>
-              {profile.worksOutdoors ? 'Safer hours and prep for work or exercise outside' : 'Forecast and safer hours'}
-            </Text>
-          </View>
-          <ChevronRight size={22} color={c.muted} />
-        </Pressable>
-
         {/* ── More tools ───────────────────────────────────────────────────── */}
         <Text style={[styles.sectionLabel, { color: c.muted }]}>More tools</Text>
         <View style={[styles.list, { backgroundColor: c.card, borderColor: c.border, borderWidth }]}>
           {[
+            ...(coolingRisk && showVehicle ? [{ label: 'Cool Spots near you', Icon: MapPin, href: '/map' }] : []),
             { label: 'Daily brief', Icon: Newspaper, href: '/brief' },
             { label: 'Cool-down timer', Icon: Snowflake, href: '/cooldown/timer' },
             { label: 'Heat acclimation', Icon: Activity, href: '/acclimation' },
-            ...(showVehicle ? [{ label: 'Emergency info card', Icon: LifeBuoy, href: '/offline/emergency-card' }] : []),
+            ...(showVehicle || coolingRisk ? [{ label: 'Emergency info card', Icon: LifeBuoy, href: '/offline/emergency-card' }] : []),
           ].map((item, i, arr) => (
             <Pressable
               key={item.href}
@@ -637,6 +699,8 @@ export default function HomeScreen() {
             </Pressable>
           ))}
         </View>
+
+        <Text style={[styles.footer, { color: c.muted }]}>{updatedLabel}. Pull down to refresh.</Text>
       </ScrollView>
     </View>
   );
@@ -654,10 +718,10 @@ const styles = StyleSheet.create({
   content: { paddingHorizontal: 20, paddingBottom: 40, gap: 14 },
   flex1: { flex: 1 },
 
-  header: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  headerText: { flex: 1 },
+  topRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: -14 },
+  header: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   location: { fontSize: 14, fontWeight: '700' },
-  greeting: { fontSize: 25, fontWeight: '800', letterSpacing: -0.3 },
+  greeting: { flex: 1, fontSize: 26, fontWeight: '800', letterSpacing: -0.3, lineHeight: 31 },
   iconBtn: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
   chip: {
     minHeight: 56,
@@ -675,7 +739,8 @@ const styles = StyleSheet.create({
   summary: { gap: 4 },
   summaryText: { fontSize: 17, fontWeight: '700', lineHeight: 23 },
   summaryMeta: { fontSize: 14 },
-  personal: { fontSize: 15, marginTop: 4, lineHeight: 21 },
+  personalRow: { flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: 32 },
+  personal: { flex: 1, fontSize: 15, lineHeight: 21 },
   personalStrong: { fontWeight: '800' },
   inlineLink: { flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 44 },
   inlineLinkText: { fontSize: 15, fontWeight: '700', flexShrink: 1 },
@@ -701,6 +766,8 @@ const styles = StyleSheet.create({
   tileBigUnit: { fontSize: 15, fontWeight: '600' },
   tileSub: { fontSize: 15, lineHeight: 20 },
   track: { height: 8, borderRadius: 4, overflow: 'hidden' },
+  tileNudge: { fontSize: 14, fontWeight: '800' },
+  footer: { fontSize: 13, textAlign: 'center', marginTop: 4 },
   trackFill: { height: 8, borderRadius: 4 },
 
   row: { flexDirection: 'row', alignItems: 'center', gap: 14, borderRadius: 16, padding: 16, minHeight: 72 },

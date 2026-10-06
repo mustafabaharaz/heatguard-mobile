@@ -1,12 +1,12 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// FILE: src/components/profile/HouseholdQuestions.tsx   (NEW FILE + NEW FOLDER)
-// HeatGuard · "Who are you protecting?" questions
+// FILE: src/components/profile/HouseholdQuestions.tsx
+// HeatGuard · "Home & lifestyle" questions
 // Used by onboarding and by app/profile/household.tsx.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
-import { Check, Baby, PawPrint, Sun, Home } from 'lucide-react-native';
+import { Check, Baby, PawPrint, Sun, Home, AirVent, Fan } from 'lucide-react-native';
 import type { HouseholdAnswers } from '../../features/profile/storage/profileStorage';
 
 export interface HouseholdColors {
@@ -28,7 +28,9 @@ const QUESTIONS: {
   { key: 'drivesWithKids', label: 'Kids ride in my car', hint: 'Back-seat checks and reminders on hot days', Icon: Baby },
   { key: 'drivesWithPets', label: 'Pets ride in my car', hint: 'Back-seat checks and reminders on hot days', Icon: PawPrint },
   { key: 'worksOutdoors', label: 'I work or exercise outdoors', hint: 'Safer hours and activity prep', Icon: Sun },
-  { key: 'livesAlone', label: 'I live alone', hint: 'Make sure someone can be reached if you need help', Icon: Home },
+  { key: 'livesAlone', label: 'I live alone', hint: 'A daily check-in so someone knows you are OK', Icon: Home },
+  { key: 'noAC', label: 'No AC at home', hint: 'Cooling centers near you, front and center', Icon: AirVent },
+  { key: 'acUnreliable', label: 'My AC is old or unreliable', hint: 'A plan for when it stops working', Icon: Fan },
 ];
 
 interface Props {
@@ -38,6 +40,14 @@ interface Props {
 }
 
 export default function HouseholdQuestions({ value, onChange, colors }: Props) {
+  const toggle = (key: keyof HouseholdAnswers) => {
+    const next = { ...value, [key]: !value[key] };
+    // "No AC" and "unreliable AC" can't both be true
+    if (key === 'noAC' && next.noAC) next.acUnreliable = false;
+    if (key === 'acUnreliable' && next.acUnreliable) next.noAC = false;
+    onChange(next);
+  };
+
   return (
     <View style={styles.list}>
       {QUESTIONS.map(({ key, label, hint, Icon }) => {
@@ -45,7 +55,7 @@ export default function HouseholdQuestions({ value, onChange, colors }: Props) {
         return (
           <Pressable
             key={key}
-            onPress={() => onChange({ ...value, [key]: !checked })}
+            onPress={() => toggle(key)}
             accessibilityRole="checkbox"
             accessibilityState={{ checked }}
             accessibilityLabel={`${label}. ${hint}`}

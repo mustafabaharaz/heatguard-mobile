@@ -26,7 +26,7 @@ import HouseholdQuestions from '../../src/components/profile/HouseholdQuestions'
 import { DISCLAIMER_POINTS, DISCLAIMER_TITLE } from '../../src/content/disclaimer';
 import { acceptDisclaimer } from '../../src/features/settings/appPrefs';
 import {
-  getHeatProfile,
+  getHouseholdAnswers,
   saveHouseholdAnswers,
   type HouseholdAnswers,
 } from '../../src/features/profile/storage/profileStorage';
@@ -84,15 +84,7 @@ export default function OnboardingScreen() {
   const scrollRef = useRef<ScrollView>(null);
   const [index, setIndex] = useState(0);
 
-  const [household, setHousehold] = useState<HouseholdAnswers>(() => {
-    const p = getHeatProfile();
-    return {
-      drivesWithKids: p.drivesWithKids,
-      drivesWithPets: p.drivesWithPets,
-      worksOutdoors: p.worksOutdoors,
-      livesAlone: p.livesAlone,
-    };
-  });
+  const [household, setHousehold] = useState<HouseholdAnswers>(() => getHouseholdAnswers());
 
   const householdIndex = SLIDES.length;      // after the intro slides
   const disclaimerIndex = SLIDES.length + 1; // last page

@@ -1,3 +1,10 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// FILE: src/services/notifications/push.ts
+// HeatGuard · Local notifications
+// Heat alerts, daily check, and hot-day "look before you lock" reminders
+// (now using the names of the people and pets who ride along).
+// ─────────────────────────────────────────────────────────────────────────────
+
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 import { getNotificationPrefs } from '../../features/settings/appPrefs';
@@ -43,7 +50,7 @@ export async function registerForPushNotifications(): Promise<string | null> {
 export async function scheduleHeatAlert(temperature: number, riskLevel: string) {
   await Notifications.scheduleNotificationAsync({
     content: {
-      title: '🌡️ Heat Alert',
+      title: 'Heat alert',
       body: getAlertMessage(temperature, riskLevel),
       sound: true,
       priority: Notifications.AndroidNotificationPriority.HIGH,
@@ -54,10 +61,9 @@ export async function scheduleHeatAlert(temperature: number, riskLevel: string) 
 }
 
 export async function scheduleDailyCheck(hour: number = 14) {
-  // Schedule daily check at 2 PM (hottest time)
   await Notifications.scheduleNotificationAsync({
     content: {
-      title: '🛡️ HeatGuard Daily Check',
+      title: 'HeatGuard daily check',
       body: 'Time to check the temperature and stay safe!',
       sound: true,
     },
@@ -110,8 +116,18 @@ export async function cancelVehicleReminders(): Promise<void> {
   } catch {}
 }
 
+function joinNames(names: string[]): string {
+  if (names.length <= 1) return names[0] ?? '';
+  return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+}
+
+/**
+ * @param days   upcoming days with their forecast highs
+ * @param riders names of kids/pets/family who ride along (optional)
+ */
 export async function scheduleHotDayVehicleReminders(
   days: { dateKey: string; highF: number }[],
+  riders: string[] = [],
 ): Promise<void> {
   if (Platform.OS === 'web') return;
   try {
@@ -122,6 +138,7 @@ export async function scheduleHotDayVehicleReminders(
     const { status } = await Notifications.getPermissionsAsync();
     if (status !== 'granted') return; // never prompt from a background refresh
 
+    const who = joinNames(riders);
     const now = Date.now();
     for (const day of days) {
       if (day.highF < VEHICLE_REMINDER_THRESHOLD_F) continue;
@@ -132,8 +149,10 @@ export async function scheduleHotDayVehicleReminders(
       await Notifications.scheduleNotificationAsync({
         identifier: `${VEHICLE_REMINDER_PREFIX}${day.dateKey}`,
         content: {
-          title: '🚗 Hot day — look before you lock',
-          body: `Today reaches ${Math.round(day.highF)}°F. A parked car can pass 120°F within minutes. Tap to start a vehicle timer when you park.`,
+          title: who ? `Hot day: check for ${who}` : 'Hot day: look before you lock',
+          body: `Today reaches ${Math.round(day.highF)}°F. A parked car heats up fast.${
+            who ? ` Always check the back seat for ${who}.` : ''
+          } Tap to start a vehicle timer when you park.`,
           sound: true,
           data: { route: '/vehicle/alert' },
         },
