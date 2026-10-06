@@ -1,8 +1,9 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // FILE: src/features/risk/riskEngine.ts
 // HeatGuard · Shared heat-risk engine (v2: NWS categories + CDC risk groups)
-// One answer to "how risky is today's heat for me?", used by Home, the Daily
-// brief, and the "Your heat risk" explainer page (app/risk/index.tsx).
+// One answer to "how risky is this heat for me?", used everywhere a level is
+// shown: Home, "Your heat risk" (app/risk), Plan (day strip + safer hours),
+// activity prep, the hour-by-hour forecast, and Be prepared.
 //
 // 1. Weather level — from today's peak feels-like temperature, using the
 //    National Weather Service heat index categories:
@@ -90,22 +91,28 @@ const NWS_TO_LEVEL: Record<NwsCategory, RiskLevel> = {
   extremeDanger: 'veryHigh',
 };
 
-export function riskGroups(p: HeatProfile): RiskGroup[] {
+export interface RiskOptions {
+  /** Hard physical effort (hiking, sports, yard work, outdoor job) counts as the
+   *  "hard work or exercise outdoors" group for that activity. */
+  strenuous?: boolean;
+}
+
+export function riskGroups(p: HeatProfile, opts: RiskOptions = {}): RiskGroup[] {
   const g: RiskGroup[] = [];
   const age = Number(p.age);
   if (p.isElderly || age >= 65) g.push('age');
   if (p.hasHeartDisease || p.hasDiabetes || p.hasRespiratoryIssues || p.healthConcern) g.push('condition');
   if (p.takesMedications) g.push('medicines');
-  if (p.worksOutdoors || p.activityLevel === 'high') g.push('outdoors');
+  if (p.worksOutdoors || p.activityLevel === 'high' || opts.strenuous) g.push('outdoors');
   if (p.noAC || p.acUnreliable || p.acOffToSave) g.push('cooling');
   if (p.livesAlone) g.push('alone');
   return g;
 }
 
-export function assessRisk(feelsLikeF: number, profile: HeatProfile): RiskAssessment {
+export function assessRisk(feelsLikeF: number, profile: HeatProfile, opts: RiskOptions = {}): RiskAssessment {
   const nws = nwsCategory(feelsLikeF);
   const weatherLevel = NWS_TO_LEVEL[nws];
-  const groups = riskGroups(profile);
+  const groups = riskGroups(profile, opts);
   const idx = LEVELS.indexOf(weatherLevel);
   const finalIdx = groups.length ? Math.min(idx + 1, LEVELS.length - 1) : idx;
   const level = LEVELS[finalIdx];
@@ -118,6 +125,20 @@ export function assessRisk(feelsLikeF: number, profile: HeatProfile): RiskAssess
     feelsLikeF: Math.round(feelsLikeF),
     levelNumber: finalIdx + 1,
   };
+}
+
+/** Level for one forecast hour: the higher of air temp and feels-like. */
+export function hourLevel(tempF: number, feelsF: number, profile: HeatProfile, opts: RiskOptions = {}): RiskLevel {
+  return assessRisk(Math.max(tempF, feelsF), profile, opts).level;
+}
+
+/** 0 (low) … 3 (very high) */
+export function levelRank(l: RiskLevel): number {
+  return LEVELS.indexOf(l);
+}
+
+export function maxLevel(levels: RiskLevel[]): RiskLevel {
+  return levels.reduce<RiskLevel>((m, l) => (levelRank(l) > levelRank(m) ? l : m), 'low');
 }
 
 /** Today's peak feels-like (°F), or null if the forecast isn't loaded. */

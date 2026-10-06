@@ -1,51 +1,41 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// HeatGuard · Heatwave Preparedness Engine
-//
-// Takes the 5-day forecast and the user's heat profile and produces:
-//   - A heatwave severity assessment (is one coming? how bad?)
-//   - A prioritised checklist of preparation actions
-//   - A day-by-day plan (best window, avoid window, focus action)
-//   - Supply recommendations tailored to profile risk factors
+// FILE: src/features/preparedness/preparednessEngine.ts
+// HeatGuard · Be prepared engine (v2: shared risk engine)
+// Turns the 5-day forecast (features/intelligence/forecastEngine, whose levels
+// come from features/risk/riskEngine) and the heat profile into:
+//   - how serious the coming days are for this user
+//   - a prioritized checklist
+//   - a short plan per day
+//   - a supply list (US units; water per FEMA: 1 gallon per person per day)
 // ─────────────────────────────────────────────────────────────────────────────
 
-import type { DayForecast, ThermalLevel } from '../intelligence/forecastEngine';
+import type { DayForecast } from '../intelligence/forecastEngine';
+import { windowLabel } from '../intelligence/forecastEngine';
 import type { HeatProfile } from '../profile/storage/profileStorage';
+import type { RiskLevel } from '../risk/riskEngine';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export type HeatwaveSeverity = 'none' | 'mild' | 'moderate' | 'severe' | 'extreme';
 
+export type PrepCategory = 'water' | 'home' | 'health' | 'supplies' | 'people' | 'planning';
+
 export interface PrepAction {
   id: string;
-  category: 'water' | 'shelter' | 'medical' | 'supplies' | 'social' | 'planning';
+  category: PrepCategory;
   priority: 'critical' | 'high' | 'medium';
   title: string;
   detail: string;
-  completed: boolean;
 }
 
 export interface DayPlan {
+  dateKey: string;
   dayLabel: string;
   dateLabel: string;
-  peakLevel: ThermalLevel;
-  peakTemp: number;
+  level: RiskLevel;
+  highF: number;
   bestWindow: string;
-  avoidWindow: string;
   focusAction: string;
-  directive: string;
-}
-
-export interface PreparednessPlan {
-  severity: HeatwaveSeverity;
-  severityLabel: string;
-  severityColor: string;
-  headline: string;
-  summary: string;
-  daysUntilPeak: number;        // 0 = today is the peak
-  peakTemp: number;
-  actions: PrepAction[];
-  dayPlans: DayPlan[];
-  supplies: SupplyItem[];
 }
 
 export interface SupplyItem {
@@ -54,375 +44,227 @@ export interface SupplyItem {
   critical: boolean;
 }
 
-// ── Main engine function ───────────────────────────────────────────────────────
-
-export function generatePreparednessPlan(
-  forecast: DayForecast[],
-  profile: HeatProfile
-): PreparednessPlan {
-  const severity     = assessSeverity(forecast);
-  const peakDay      = getPeakDay(forecast);
-  const daysUntilPeak = peakDay?.index ?? 0;
-  const peakTemp     = peakDay?.highTemp ?? 0;
-
-  return {
-    severity,
-    severityLabel: getSeverityLabel(severity),
-    severityColor: getSeverityColor(severity),
-    headline:      getHeadline(severity, daysUntilPeak),
-    summary:       getSummary(severity, daysUntilPeak, peakTemp, profile),
-    daysUntilPeak,
-    peakTemp,
-    actions:       generateActions(severity, profile, forecast),
-    dayPlans:      generateDayPlans(forecast),
-    supplies:      generateSupplies(severity, profile),
-  };
+export interface PreparednessPlan {
+  severity: HeatwaveSeverity;
+  headline: string;
+  summary: string;
+  veryHighDays: number;
+  actions: PrepAction[];
+  dayPlans: DayPlan[];
+  supplies: SupplyItem[];
 }
 
-// ── Severity assessment ────────────────────────────────────────────────────────
+// ── Severity ──────────────────────────────────────────────────────────────────
+// Counts this user's Very high and High days (same levels as Home and Plan).
 
-function assessSeverity(forecast: DayForecast[]): HeatwaveSeverity {
-  const levels = forecast.map(d => d.peakLevel);
-  const crisisDays   = levels.filter(l => l === 'crisis').length;
-  const extremeDays  = levels.filter(l => l === 'extreme' || l === 'crisis').length;
-  const highDays     = levels.filter(l => l === 'highAlert' || l === 'extreme' || l === 'crisis').length;
-
-  if (crisisDays >= 2)   return 'extreme';
-  if (crisisDays >= 1)   return 'severe';
-  if (extremeDays >= 3)  return 'severe';
-  if (extremeDays >= 1)  return 'moderate';
-  if (highDays >= 3)     return 'moderate';
-  if (highDays >= 1)     return 'mild';
+function assessSeverity(days: DayForecast[]): HeatwaveSeverity {
+  const veryHigh = days.filter(d => d.level === 'veryHigh').length;
+  const highPlus = days.filter(d => d.level === 'high' || d.level === 'veryHigh').length;
+  const extremeDanger = days.some(d => d.nws === 'extremeDanger');
+  if (extremeDanger || veryHigh >= 4) return 'extreme';
+  if (veryHigh >= 2) return 'severe';
+  if (veryHigh >= 1 || highPlus >= 3) return 'moderate';
+  if (highPlus >= 1) return 'mild';
   return 'none';
 }
 
-function getPeakDay(forecast: DayForecast[]): DayForecast | null {
-  if (!forecast.length) return null;
-  return forecast.reduce((peak, day) =>
-    day.highTemp > peak.highTemp ? day : peak
-  );
+function firstVeryHighIndex(days: DayForecast[]): number {
+  const i = days.findIndex(d => d.level === 'veryHigh' || d.level === 'high');
+  return i < 0 ? 0 : i;
 }
 
-// ── Action generation ──────────────────────────────────────────────────────────
+// ── Main ──────────────────────────────────────────────────────────────────────
 
-function generateActions(
-  severity: HeatwaveSeverity,
-  profile: HeatProfile,
-  forecast: DayForecast[]
-): PrepAction[] {
-  const actions: PrepAction[] = [];
-  const isSevere = severity === 'severe' || severity === 'extreme';
-  const isModerate = severity === 'moderate' || isSevere;
+export function generatePreparednessPlan(days: DayForecast[], profile: HeatProfile): PreparednessPlan {
+  const severity = assessSeverity(days);
+  const startsIn = firstVeryHighIndex(days);
+  return {
+    severity,
+    headline: getHeadline(severity, startsIn),
+    summary: getSummary(severity, days),
+    veryHighDays: days.filter(d => d.level === 'veryHigh').length,
+    actions: generateActions(severity, profile),
+    dayPlans: days.slice(0, 5).map(toDayPlan),
+    supplies: generateSupplies(severity, profile),
+  };
+}
 
-  // ── Water ──────────────────────────────────────────────────────────────────
+// ── Actions ───────────────────────────────────────────────────────────────────
 
-  actions.push({
-    id: 'water_stock',
-    category: 'water',
-    priority: 'critical',
-    title: 'Stock water supply',
-    detail: isSevere
-      ? 'Store at least 4L per person per day for the heatwave duration. Fill bathtub as emergency reserve.'
-      : 'Store at least 2L per person per day. Keep refrigerated water accessible.',
-    completed: false,
+function generateActions(severity: HeatwaveSeverity, p: HeatProfile): PrepAction[] {
+  const severe = severity === 'severe' || severity === 'extreme';
+  const moderate = severity === 'moderate' || severe;
+  const a: PrepAction[] = [];
+
+  a.push({
+    id: 'water_stock', category: 'water', priority: 'critical',
+    title: 'Keep drinking water on hand',
+    detail: 'Plan on at least 1 gallon per person per day. Keep some cold in the fridge so it’s easy to drink.',
+  });
+  a.push({
+    id: 'water_electrolytes', category: 'water', priority: moderate ? 'high' : 'medium',
+    title: 'Get sports drinks or electrolyte packets',
+    detail: 'Useful if you sweat a lot working or exercising. Ask your doctor first if you are on a fluid or salt limit.',
   });
 
-  actions.push({
-    id: 'water_electrolytes',
-    category: 'water',
-    priority: isModerate ? 'high' : 'medium',
-    title: 'Get electrolyte supplies',
-    detail: 'Sports drinks, oral rehydration salts, or coconut water. Pure water alone is insufficient during heavy sweating.',
-    completed: false,
+  a.push({
+    id: 'home_ac', category: 'home', priority: 'critical',
+    title: 'Check that your AC works',
+    detail: 'Test it now, before the hottest days. Change the filter if it’s dirty. Know where you would go if it fails.',
+  });
+  a.push({
+    id: 'home_backup', category: 'home', priority: severe ? 'critical' : 'high',
+    title: 'Pick a backup cool place',
+    detail: 'A cooling center, library, or friend’s home with AC. Cool Spots lists nearby ones in Maricopa County.',
+  });
+  a.push({
+    id: 'home_blinds', category: 'home', priority: 'medium',
+    title: 'Block the afternoon sun',
+    detail: 'Close blinds and curtains on sunny windows during the day to keep rooms cooler.',
   });
 
-  // ── Shelter ────────────────────────────────────────────────────────────────
-
-  actions.push({
-    id: 'shelter_ac',
-    category: 'shelter',
-    priority: 'critical',
-    title: 'Confirm AC is working',
-    detail: 'Test your air conditioning now. Locate the nearest public cooling centre in case of power failure.',
-    completed: false,
-  });
-
-  if (isSevere) {
-    actions.push({
-      id: 'shelter_backup',
-      category: 'shelter',
-      priority: 'high',
-      title: 'Identify backup cooling location',
-      detail: 'Know your nearest library, mall, or community centre with AC. Write the address down — don\'t rely on your phone working.',
-      completed: false,
+  if (p.takesMedications) {
+    a.push({
+      id: 'health_meds', category: 'health', priority: 'critical',
+      title: 'Ask your pharmacist about your medicines in heat',
+      detail: 'Some medicines change how your body handles heat or need to be stored cool. Don’t stop or change a medicine on your own.',
     });
   }
-
-  actions.push({
-    id: 'shelter_block',
-    category: 'shelter',
-    priority: 'high',
-    title: 'Block heat from windows',
-    detail: 'Close blinds and curtains on sun-facing windows before 10am. Reflective window film reduces indoor temp by up to 8°C.',
-    completed: false,
+  if (p.hasDiabetes || p.hasHeartDisease || p.hasRespiratoryIssues || p.healthConcern) {
+    a.push({
+      id: 'health_plan', category: 'health', priority: 'critical',
+      title: 'Talk with your doctor about a heat plan',
+      detail: 'Ask what warning signs to watch for and when to call them.',
+    });
+  }
+  a.push({
+    id: 'health_signs', category: 'health', priority: moderate ? 'high' : 'medium',
+    title: 'Learn the signs of heat illness',
+    detail: 'Heat exhaustion and heat stroke look different. The Emergency info card in HeatGuard shows both, even offline.',
   });
 
-  // ── Medical ────────────────────────────────────────────────────────────────
-
-  if (profile.takesMedications) {
-    actions.push({
-      id: 'med_review',
-      category: 'medical',
-      priority: 'critical',
-      title: 'Review medications with pharmacist',
-      detail: 'Some medications require dose adjustment or extra monitoring during heatwaves. Contact your pharmacist before the heat arrives.',
-      completed: false,
-    });
-  }
-
-  if (profile.hasDiabetes) {
-    actions.push({
-      id: 'med_diabetes',
-      category: 'medical',
-      priority: 'critical',
-      title: 'Prepare diabetes heat plan',
-      detail: 'Heat affects blood glucose and insulin storage. Keep insulin refrigerated. Check glucose more frequently. Have fast-acting sugar accessible.',
-      completed: false,
-    });
-  }
-
-  if (profile.hasHeartDisease) {
-    actions.push({
-      id: 'med_heart',
-      category: 'medical',
-      priority: 'critical',
-      title: 'Notify your cardiologist',
-      detail: 'Heatwaves significantly increase cardiac event risk. Confirm your action plan, know warning signs, and keep emergency contacts accessible.',
-      completed: false,
-    });
-  }
-
-  actions.push({
-    id: 'med_first_aid',
-    category: 'medical',
-    priority: isModerate ? 'high' : 'medium',
-    title: 'Prepare heat illness first aid kit',
-    detail: 'Cool packs, thermometer, oral rehydration sachets, spray bottle. Know the difference between heat exhaustion and heat stroke.',
-    completed: false,
-  });
-
-  // ── Supplies ───────────────────────────────────────────────────────────────
-
-  actions.push({
-    id: 'supplies_cooling',
-    category: 'supplies',
-    priority: 'high',
+  a.push({
+    id: 'supplies_cooling', category: 'supplies', priority: 'high',
     title: 'Gather cooling supplies',
-    detail: 'Spray bottle with water, damp towels, portable fan, cooling towels. Keep them in the coolest room.',
-    completed: false,
+    detail: 'Spray bottle, cooling towels, ice packs, a battery fan. Keep them in the coolest room.',
+  });
+  a.push({
+    id: 'supplies_power', category: 'supplies', priority: severe ? 'high' : 'medium',
+    title: 'Charge a power bank',
+    detail: 'So your phone works if the power goes out.',
   });
 
-  if (isSevere) {
-    actions.push({
-      id: 'supplies_power',
-      category: 'supplies',
-      priority: 'high',
-      title: 'Charge backup power banks',
-      detail: 'HeatGuard and your emergency contacts depend on your phone working. Charge all power banks now.',
-      completed: false,
+  a.push({
+    id: 'people_contacts', category: 'people', priority: 'critical',
+    title: 'Add emergency contacts',
+    detail: 'So SOS texts reach someone. Tell them your plans on the hottest days.',
+  });
+  if (p.isElderly || p.livesAlone || p.hasHeartDisease || p.hasDiabetes) {
+    a.push({
+      id: 'people_checkin', category: 'people', priority: 'critical',
+      title: 'Turn on daily check-in',
+      detail: 'HeatGuard asks “Are you OK?” and your heat buddy can check on you.',
+    });
+  }
+  a.push({
+    id: 'people_neighbors', category: 'people', priority: 'medium',
+    title: 'Check on neighbors',
+    detail: 'Older adults and people living alone are at the highest risk.',
+  });
+
+  a.push({
+    id: 'plan_schedule', category: 'planning', priority: 'high',
+    title: 'Move outdoor plans to cooler hours',
+    detail: 'Early morning or evening. The Plan tab shows your safer hours each day.',
+  });
+  if (p.drivesWithKids || p.drivesWithPets || severe) {
+    a.push({
+      id: 'plan_car', category: 'planning', priority: 'critical',
+      title: 'Never leave a child or pet in a car',
+      detail: 'Not even for a minute. A car heats up fast, even with windows cracked.',
     });
   }
 
-  // ── Social ─────────────────────────────────────────────────────────────────
-
-  actions.push({
-    id: 'social_contacts',
-    category: 'social',
-    priority: 'critical',
-    title: 'Alert your emergency contacts',
-    detail: 'Tell someone your plans for each high-heat day. Check in on elderly or vulnerable neighbours.',
-    completed: false,
-  });
-
-  if (profile.isElderly || profile.hasDiabetes || profile.hasHeartDisease) {
-    actions.push({
-      id: 'social_checkin',
-      category: 'social',
-      priority: 'critical',
-      title: 'Set up daily check-in schedule',
-      detail: 'Arrange for someone to call or visit you daily during the heatwave. Share your address with a trusted contact.',
-      completed: false,
-    });
-  }
-
-  // ── Planning ───────────────────────────────────────────────────────────────
-
-  actions.push({
-    id: 'plan_schedule',
-    category: 'planning',
-    priority: 'high',
-    title: 'Reschedule outdoor activities',
-    detail: 'Move all outdoor tasks to before 9am or after 7pm. Cancel non-essential outdoor commitments on extreme days.',
-    completed: false,
-  });
-
-  if (isSevere) {
-    actions.push({
-      id: 'plan_pets',
-      category: 'planning',
-      priority: 'high',
-      title: 'Plan for pets and vehicle safety',
-      detail: 'Never leave pets or children in vehicles. Keep pets indoors. Check outdoor animals have shade and water every 2 hours.',
-      completed: false,
-    });
-  }
-
-  // Sort: critical first, then high, then medium
-  return actions.sort((a, b) => priorityRank(b.priority) - priorityRank(a.priority));
+  const rank = (x: PrepAction['priority']) => (x === 'critical' ? 3 : x === 'high' ? 2 : 1);
+  return a.sort((x, y) => rank(y.priority) - rank(x.priority));
 }
 
-// ── Day plans ──────────────────────────────────────────────────────────────────
+// ── Day plans ─────────────────────────────────────────────────────────────────
 
-function generateDayPlans(forecast: DayForecast[]): DayPlan[] {
-  return forecast.slice(0, 5).map(day => ({
-    dayLabel:    day.dayLabel,
-    dateLabel:   day.dateLabel,
-    peakLevel:   day.peakLevel,
-    peakTemp:    day.highTemp,
-    bestWindow:  day.safeStart !== null
-      ? `${formatHour(day.safeStart)} – ${formatHour((day.safeEnd ?? day.safeStart) + 2)}`
-      : 'Avoid outdoors',
-    avoidWindow: day.dangerStart !== null
-      ? `${formatHour(day.dangerStart)} – ${formatHour(day.dangerEnd ?? 20)}`
-      : 'All day safe',
-    focusAction: getDayFocusAction(day.peakLevel),
-    directive:   day.directive,
-  }));
+function toDayPlan(d: DayForecast): DayPlan {
+  const best =
+    d.bestStart !== null && d.bestEnd !== null
+      ? `${d.bestIsSafer ? 'Best outside' : 'Coolest hours'}: ${windowLabel(d.bestStart, d.bestEnd)}`
+      : 'No hourly forecast yet';
+  return {
+    dateKey: d.dateKey,
+    dayLabel: d.dayLabel,
+    dateLabel: d.dateLabel,
+    level: d.level,
+    highF: d.highF,
+    bestWindow: best,
+    focusAction: FOCUS[d.level],
+  };
 }
 
-function getDayFocusAction(level: ThermalLevel): string {
-  switch (level) {
-    case 'crisis':    return 'Stay indoors all day. No exceptions.';
-    case 'extreme':   return 'Indoors by 10am. Emergency contacts on alert.';
-    case 'highAlert': return 'Limit outdoor exposure. Hydrate every 20 min.';
-    case 'caution':   return 'Morning activities only. Take regular breaks.';
-    default:          return 'Normal precautions. Stay aware.';
-  }
-}
+const FOCUS: Record<RiskLevel, string> = {
+  veryHigh: 'Stay somewhere cool in the afternoon. Check in with someone.',
+  high: 'Limit time outside. Drink water often.',
+  moderate: 'Outdoor plans in the morning or evening.',
+  low: 'Normal care.',
+};
 
-// ── Supply list ────────────────────────────────────────────────────────────────
+// ── Supplies ──────────────────────────────────────────────────────────────────
 
-function generateSupplies(severity: HeatwaveSeverity, profile: HeatProfile): SupplyItem[] {
-  const isSevere = severity === 'severe' || severity === 'extreme';
-  const days     = isSevere ? 5 : 3;
-
+function generateSupplies(severity: HeatwaveSeverity, p: HeatProfile): SupplyItem[] {
+  const severe = severity === 'severe' || severity === 'extreme';
+  const days = severe ? 5 : 3;
   const items: SupplyItem[] = [
-    { name: 'Drinking water',         quantity: `${days * 3}L per person`,  critical: true  },
-    { name: 'Electrolyte drinks',     quantity: `${days * 2} bottles`,      critical: true  },
-    { name: 'Spray bottle',           quantity: '1–2',                      critical: false },
-    { name: 'Cooling towels',         quantity: '2–4',                      critical: false },
-    { name: 'Thermometer',            quantity: '1',                        critical: false },
-    { name: 'Oral rehydration salts', quantity: '6–10 sachets',             critical: isSevere },
-    { name: 'Cold packs / ice',       quantity: 'As many as fit in freezer', critical: isSevere },
-    { name: 'Battery-powered fan',    quantity: '1',                        critical: isSevere },
+    { name: 'Drinking water', quantity: `${days} gallons per person`, critical: true },
+    { name: 'Sports drinks or electrolyte packets', quantity: 'A few days’ worth', critical: false },
+    { name: 'Ice packs', quantity: '2–4', critical: severe },
+    { name: 'Cooling towels or spray bottle', quantity: '1–2', critical: false },
+    { name: 'Battery fan', quantity: '1', critical: severe },
+    { name: 'Thermometer', quantity: '1', critical: false },
+    { name: 'Power bank', quantity: 'Charged', critical: severe },
   ];
-
-  if (profile.hasDiabetes) {
-    items.push({ name: 'Fast-acting glucose (juice, glucose tablets)', quantity: 'Several servings', critical: true });
-    items.push({ name: 'Insulin cold storage pack',                    quantity: '1',               critical: true });
+  if (p.takesMedications) {
+    items.push({ name: 'Extra supply of your medicines', quantity: 'A few days’ worth', critical: true });
   }
-
-  if (profile.takesMedications) {
-    items.push({ name: 'Extra medication supply',  quantity: `${days + 2} days`,  critical: true });
-    items.push({ name: 'Medication storage at safe temp', quantity: 'Refrigerated', critical: true });
-  }
-
   return items;
 }
 
-// ── Label / colour helpers ─────────────────────────────────────────────────────
+// ── Words ─────────────────────────────────────────────────────────────────────
 
-function getSeverityLabel(s: HeatwaveSeverity): string {
+function getHeadline(s: HeatwaveSeverity, startsIn: number): string {
+  if (s === 'none') return 'No dangerous heat in the next 5 days';
+  const when = startsIn === 0 ? 'starting today' : startsIn === 1 ? 'starting tomorrow' : `in ${startsIn} days`;
   switch (s) {
-    case 'extreme':  return 'Extreme heatwave';
-    case 'severe':   return 'Severe heatwave';
-    case 'moderate': return 'Moderate heatwave';
-    case 'mild':     return 'Mild heat event';
-    default:         return 'No heatwave forecast';
+    case 'extreme': return `Extreme heat for you ${when}`;
+    case 'severe': return `Dangerous heat for you ${when}`;
+    case 'moderate': return `Very hot days ${when}`;
+    default: return `Some hot days ${when}`;
   }
 }
 
-export function getSeverityColor(s: HeatwaveSeverity): string {
-  switch (s) {
-    case 'extreme':  return '#7C2D12';
-    case 'severe':   return '#DC2626';
-    case 'moderate': return '#EA580C';
-    case 'mild':     return '#D97706';
-    default:         return '#2D9B6F';
-  }
+function getSummary(s: HeatwaveSeverity, days: DayForecast[]): string {
+  if (s === 'none' || !days.length) return 'Conditions look manageable. A good time to check your supplies.';
+  const vh = days.filter(d => d.level === 'veryHigh').length;
+  const part = vh ? `${vh} of the next ${days.length} days are Very high for you.` : 'Your heat risk reaches High this week.';
+  return `${part} Start at the top of the list.`;
 }
 
-function getHeadline(s: HeatwaveSeverity, daysUntil: number): string {
-  if (s === 'none') return 'No heatwave in the forecast';
-  const timing = daysUntil === 0 ? 'is here' : daysUntil === 1 ? 'arrives tomorrow' : `arrives in ${daysUntil} days`;
-  switch (s) {
-    case 'extreme':  return `Extreme heatwave ${timing}`;
-    case 'severe':   return `Severe heatwave ${timing}`;
-    case 'moderate': return `Moderate heatwave ${timing}`;
-    default:         return `Heat event ${timing}`;
-  }
-}
+// ── UI helpers ────────────────────────────────────────────────────────────────
 
-function getSummary(s: HeatwaveSeverity, daysUntil: number, peak: number, profile: HeatProfile): string {
-  if (s === 'none') return 'Conditions look manageable for the next 5 days. Keep your supplies topped up.';
-  const urgency = daysUntil === 0 ? 'The heatwave is already here.' : `You have ${daysUntil} day${daysUntil > 1 ? 's' : ''} to prepare.`;
-  const riskNote = (profile.isElderly || profile.hasDiabetes || profile.hasHeartDisease)
-    ? ' Your health profile puts you at elevated risk — complete all critical actions today.'
-    : '';
-  return `${urgency} Peak temperatures of ${Math.round(peak)}°F expected.${riskNote}`;
-}
-
-function priorityRank(p: string): number {
-  return p === 'critical' ? 3 : p === 'high' ? 2 : 1;
-}
-
-function formatHour(h: number): string {
-  if (h <= 0 || h > 23) return '--';
-  const period = h < 12 ? 'AM' : 'PM';
-  const display = h <= 12 ? h : h - 12;
-  return `${display}${period}`;
-}
-
-// ── Category helpers (used by UI) ──────────────────────────────────────────────
-
-export function categoryLabel(cat: PrepAction['category']): string {
+export function categoryLabel(cat: PrepCategory): string {
   switch (cat) {
-    case 'water':    return 'Water';
-    case 'shelter':  return 'Shelter';
-    case 'medical':  return 'Medical';
+    case 'water': return 'Water';
+    case 'home': return 'Home';
+    case 'health': return 'Health';
     case 'supplies': return 'Supplies';
-    case 'social':   return 'Social';
+    case 'people': return 'People';
     case 'planning': return 'Planning';
   }
 }
 
-export function categoryIcon(cat: PrepAction['category']): string {
-  switch (cat) {
-    case 'water':    return 'water-outline';
-    case 'shelter':  return 'home-outline';
-    case 'medical':  return 'medkit-outline';
-    case 'supplies': return 'bag-outline';
-    case 'social':   return 'people-outline';
-    case 'planning': return 'calendar-outline';
-  }
-}
-
-export function thermalLevelColor(level: ThermalLevel): string {
-  switch (level) {
-    case 'crisis':    return '#7C2D12';
-    case 'extreme':   return '#DC2626';
-    case 'highAlert': return '#EA580C';
-    case 'caution':   return '#D97706';
-    default:          return '#2D9B6F';
-  }
-}
+export const CATEGORY_ORDER: PrepCategory[] = ['water', 'home', 'health', 'people', 'planning', 'supplies'];

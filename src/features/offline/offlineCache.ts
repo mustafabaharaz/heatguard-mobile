@@ -12,8 +12,8 @@ export type CachePriority = 'critical' | 'important' | 'fresh';
 
 const TTL_MS: Record<CachePriority, number> = {
   critical:  Infinity,          // Never expires — emergency contacts, symptoms
-  important: 24 * 60 * 60_000, // 24 hours — shelters, profile, medications
-  fresh:     30 * 60_000,       // 30 minutes — temperature, neighborhood
+  important: 24 * 60 * 60_000, // 24 hours
+  fresh:     30 * 60_000,       // 30 minutes
 };
 
 // ─── Cache Entry ──────────────────────────────────────────────────────────────
@@ -39,24 +39,11 @@ export interface CacheReadResult<T> {
 // Centralised so nothing is ever misspelled
 
 export const CACHE_KEYS = {
-  // Critical — never expire
-  EMERGENCY_CONTACTS:  'cache:critical:emergency_contacts',
+  // Critical — never expire. (Everything else HeatGuard needs offline lives in
+  // its own on-device store: contacts, profile, check-ins, saved Cool Spots.)
   HEAT_SYMPTOMS:       'cache:critical:heat_symptoms',
   SOS_INSTRUCTIONS:    'cache:critical:sos_instructions',
   HEAT_PROFILE:        'cache:critical:heat_profile',
-
-  // Important — 24 h
-  SHELTER_LIST:        'cache:important:shelter_list',
-  MEDICATIONS:         'cache:important:medications',
-  ACCLIMATION_PLAN:    'cache:important:acclimation_plan',
-  COMMUNITY_RESOURCES: 'cache:important:community_resources',
-
-  // Fresh — 30 min
-  TEMPERATURE_NOW:     'cache:fresh:temperature_now',
-  NEIGHBORHOOD_SNAP:   'cache:fresh:neighborhood_snap',
-  NETWORK_SNAP:        'cache:fresh:network_snap',
-  DAILY_BRIEF:         'cache:fresh:daily_brief',
-  FORECAST:            'cache:fresh:forecast',
 } as const;
 
 export type CacheKey = (typeof CACHE_KEYS)[keyof typeof CACHE_KEYS];

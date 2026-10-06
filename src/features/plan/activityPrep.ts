@@ -2,12 +2,22 @@
 // FILE: src/features/plan/activityPrep.ts   (NEW FILE + NEW FOLDER)
 // HeatGuard · Activity prep
 //  - Activities and their checklists
-//  - Safer hours for a day, from the real hourly "feels like" forecast
+//  - Safer hours for a day, from the real hourly forecast, judged by the
+//    shared risk engine (features/risk/riskEngine) so Plan, activity prep,
+//    the forecast and Home all agree
 //  - "Be back by" time for an activity starting at a given hour
+//
+// Hour bands (per the user's profile; strenuous activities count as
+// "hard work or exercise outdoors"):
+//    Low                  → good
+//    Moderate or High     → caution
+//    Very high            → danger (outside the safer hours)
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { WeatherSnapshot, HourlyPoint } from '../../services/weather/weatherStore';
 import { getHoursForDate } from '../../services/weather/weatherStore';
+import type { HeatProfile } from '../profile/storage/profileStorage';
+import { hourLevel, type RiskLevel } from '../risk/riskEngine';
 
 export type ActivityId =
   | 'hiking' | 'dog' | 'fishing' | 'sports' | 'yard' | 'work' | 'other';
@@ -24,11 +34,6 @@ export interface ActivityDef {
   strenuous: boolean;
   items: ChecklistItem[];
 }
-
-// Feels-like limits (°F) used to judge each hour
-const LIMIT_EASY_F = 95;       // below "High Alert" for light activity
-const LIMIT_STRENUOUS_F = 90;  // lower limit when working hard
-const COMFORT_F = 86;          // below "Caution"
 
 const BASE_ITEMS: ChecklistItem[] = [
   { label: 'Water, and more than you think', hint: 'Drink before you feel thirsty' },
@@ -117,10 +122,6 @@ export function getActivity(id: string | undefined): ActivityDef {
   return ACTIVITIES.find(a => a.id === id) ?? ACTIVITIES[ACTIVITIES.length - 1];
 }
 
-export function limitFor(activity: ActivityDef): number {
-  return activity.strenuous ? LIMIT_STRENUOUS_F : LIMIT_EASY_F;
-}
-
 // ── Hour helpers ────────────────────────────────────────────────────────────
 
 export function formatHour(h: number): string {
@@ -132,21 +133,25 @@ export function formatHour(h: number): string {
 
 export type HourBand = 'good' | 'caution' | 'danger';
 
-export function bandFor(feelsF: number, limitF: number): HourBand {
-  if (feelsF < Math.min(COMFORT_F, limitF)) return 'good';
-  if (feelsF < limitF) return 'caution';
-  return 'danger';
+export function bandForLevel(level: RiskLevel): HourBand {
+  if (level === 'low') return 'good';
+  if (level === 'veryHigh') return 'danger';
+  return 'caution';
 }
 
-/** Daytime hours (5 AM – 9 PM) for a date, with a band each. */
+/** Daytime hours (5 AM – 9 PM) for a date, with a risk level and band each. */
 export function dayBands(
   snapshot: WeatherSnapshot,
   dateKey: string,
-  limitF: number,
-): { hour: number; feelsF: number; band: HourBand }[] {
+  activity: ActivityDef,
+  profile: HeatProfile,
+): { hour: number; feelsF: number; level: RiskLevel; band: HourBand }[] {
   return getHoursForDate(snapshot, dateKey)
     .filter((h: HourlyPoint) => h.hour >= 5 && h.hour <= 21)
-    .map(h => ({ hour: h.hour, feelsF: h.feelsLikeF, band: bandFor(h.feelsLikeF, limitF) }));
+    .map(h => {
+      const level = hourLevel(h.tempF, h.feelsLikeF, profile, { strenuous: activity.strenuous });
+      return { hour: h.hour, feelsF: h.feelsLikeF, level, band: bandForLevel(level) };
+    });
 }
 
 /** Short sentence describing the safer windows for a day. */

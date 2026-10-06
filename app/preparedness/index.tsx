@@ -1,345 +1,263 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// HeatGuard · Heatwave Preparedness Mode
-// Full preparedness plan: severity banner, interactive checklist,
-// 5-day plan summary, and supply list.
+// FILE: app/preparedness/index.tsx
+// HeatGuard · Be prepared
+//  - What the next 5 days look like for you (shared risk engine levels)
+//  - Checklist by category, saved on this phone
+//  - Day-by-day plan and supply list
+// Skins: High Sun (light) / Night Shift (dark).
 // ─────────────────────────────────────────────────────────────────────────────
 
-import React, { useState, useCallback } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  ScrollView,
-  Pressable,
-} from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
-import { Ionicons } from '@expo/vector-icons';
-import { getRiskMultiplier } from '../../src/features/profile/storage/profileStorage';
-
-import {
-  generatePreparednessPlan,
-  categoryLabel,
-  categoryIcon,
-  thermalLevelColor,
-  getSeverityColor,
-  type PrepAction,
-  type PreparednessPlan,
-} from '../../src/features/preparedness/preparednessEngine';
-import {
-  getCompletedActions,
-  toggleActionCompleted,
-} from '../../src/features/preparedness/preparednessStorage';
-import { getHeatProfile } from '../../src/features/profile/storage/profileStorage';
-import { generateForecast } from '../../src/features/intelligence/forecastEngine';
+import React, { useCallback, useMemo, useState } from 'react';
+import { View, Text, ScrollView, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
+import { StatusBar } from 'expo-status-bar';
+import { useRouter, useFocusEffect } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { ChevronLeft, Check, CircleAlert } from 'lucide-react-native';
+import { useSettings } from '../../src/context/SettingsContext';
 import { useWeather } from '../../src/services/weather/useWeather';
+import { fToC } from '../../src/services/weather/weatherStore';
+import { getHeatProfile } from '../../src/features/profile/storage/profileStorage';
+import { RISK_LABEL, type RiskLevel } from '../../src/features/risk/riskEngine';
+import { generateForecast } from '../../src/features/intelligence/forecastEngine';
+import {
+  generatePreparednessPlan, categoryLabel, CATEGORY_ORDER,
+  type HeatwaveSeverity, type PrepAction,
+} from '../../src/features/preparedness/preparednessEngine';
+import { getCompletedActions, toggleActionCompleted } from '../../src/features/preparedness/preparednessStorage';
+import haptics from '../../src/utils/haptics';
 
-// ── Design tokens ─────────────────────────────────────────────────────────────
-
-const C = {
-  bg:       '#F8F9FA',
-  surface:  '#FFFFFF',
-  text:     '#1D3557',
-  textSec:  '#6B7280',
-  textTer:  '#9CA3AF',
-  border:   '#E5E7EB',
-  safe:     '#2D9B6F',
-  safeBg:   '#F0FDF4',
+const SKIN = {
+  light: {
+    bg: '#F4F4F0', card: '#FFFFFF', border: '#0A0A0A', divider: '#E2E2DC',
+    text: '#0A0A0A', muted: '#3F3F3A', accent: '#0B4FD6', onAccent: '#FFFFFF', pressed: '#ECECE6',
+    checkBg: '#0A0A0A', checkIcon: '#FFFFFF', critical: '#B91C1C',
+    level: { low: '#15803D', moderate: '#CA8A04', high: '#EA580C', veryHigh: '#B91C1C' } as Record<RiskLevel, string>,
+    severity: { none: '#15803D', mild: '#CA8A04', moderate: '#EA580C', severe: '#B91C1C', extreme: '#7F1D1D' } as Record<HeatwaveSeverity, string>,
+  },
+  dark: {
+    bg: '#0B1220', card: '#131C2E', border: '#24314F', divider: '#24314F',
+    text: '#F1F5F9', muted: '#A3B1C9', accent: '#38BDF8', onAccent: '#04121F', pressed: '#1A2540',
+    checkBg: '#38BDF8', checkIcon: '#04121F', critical: '#F87171',
+    level: { low: '#4ADE80', moderate: '#FACC15', high: '#FB923C', veryHigh: '#F87171' } as Record<RiskLevel, string>,
+    severity: { none: '#4ADE80', mild: '#FACC15', moderate: '#FB923C', severe: '#F87171', extreme: '#F87171' } as Record<HeatwaveSeverity, string>,
+  },
 };
+type Skin = typeof SKIN.light;
 
-// ── Progress ring (simple arc using border trick) ─────────────────────────────
-
-function ProgressRing({ completed, total, color }: { completed: number; total: number; color: string }) {
-  const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
-  return (
-    <View style={[pr.ring, { borderColor: color }]}>
-      <Text style={[pr.pct, { color }]}>{pct}%</Text>
-      <Text style={pr.label}>done</Text>
-    </View>
-  );
-}
-
-const pr = StyleSheet.create({
-  ring:  { width: 64, height: 64, borderRadius: 32, borderWidth: 4, alignItems: 'center', justifyContent: 'center' },
-  pct:   { fontSize: 16, fontWeight: '800' },
-  label: { fontSize: 10, color: '#9CA3AF' },
-});
-
-// ── Action row ────────────────────────────────────────────────────────────────
-
-function ActionRow({
-  action,
-  isCompleted,
-  onToggle,
-}: {
-  action: PrepAction;
-  isCompleted: boolean;
-  onToggle: () => void;
+function ActionRow({ action, done, onToggle, c, last }: {
+  action: PrepAction; done: boolean; onToggle: () => void; c: Skin; last: boolean;
 }) {
-  const [expanded, setExpanded] = useState(false);
-  const priorityColor = action.priority === 'critical' ? '#DC2626'
-    : action.priority === 'high' ? '#EA580C' : '#D97706';
-
   return (
-    <View style={[ar.row, isCompleted && ar.rowDone]}>
-      <Pressable
-        onPress={onToggle}
-        style={[ar.checkbox, isCompleted && { backgroundColor: C.safe, borderColor: C.safe }]}
-        accessibilityRole="checkbox"
-        accessibilityState={{ checked: isCompleted }}
-        accessibilityLabel={action.title}
-        hitSlop={8}
-      >
-        {isCompleted && <Ionicons name="checkmark" size={14} color="#fff" />}
-      </Pressable>
-
-      <View style={{ flex: 1, gap: 4 }}>
-        <Pressable
-          onPress={() => setExpanded(e => !e)}
-          accessibilityRole="button"
-          accessibilityLabel={expanded ? 'Collapse' : 'Expand detail'}
-        >
-          <View style={ar.titleRow}>
-            <Text style={[ar.title, isCompleted && ar.titleDone]}>{action.title}</Text>
-            <View style={[ar.priorityPill, { backgroundColor: priorityColor + '18' }]}>
-              <Text style={[ar.priorityText, { color: priorityColor }]}>{action.priority}</Text>
-            </View>
-            <Ionicons
-              name={expanded ? 'chevron-up' : 'chevron-down'}
-              size={14}
-              color={C.textTer}
-            />
-          </View>
-        </Pressable>
-        {expanded && (
-          <Text style={ar.detail}>{action.detail}</Text>
-        )}
+    <Pressable
+      onPress={onToggle}
+      accessibilityRole="checkbox"
+      accessibilityState={{ checked: done }}
+      accessibilityLabel={`${action.title}. ${action.detail}${action.priority === 'critical' ? '. Important' : ''}`}
+      style={({ pressed }) => [styles.actionRow, {
+        backgroundColor: pressed ? c.pressed : 'transparent',
+        borderBottomColor: c.divider,
+        borderBottomWidth: last ? 0 : StyleSheet.hairlineWidth,
+      }]}
+    >
+      <View style={[styles.checkbox, {
+        borderColor: done ? c.checkBg : c.muted,
+        backgroundColor: done ? c.checkBg : 'transparent',
+      }]}>
+        {done && <Check size={18} color={c.checkIcon} strokeWidth={3} />}
       </View>
-    </View>
+      <View style={styles.flex1}>
+        <View style={styles.actionTitleRow}>
+          <Text style={[styles.actionTitle, { color: c.text, textDecorationLine: done ? 'line-through' : 'none' }]}>
+            {action.title}
+          </Text>
+          {action.priority === 'critical' && !done && (
+            <CircleAlert size={16} color={c.critical} accessibilityElementsHidden />
+          )}
+        </View>
+        <Text style={[styles.actionDetail, { color: c.muted }]}>{action.detail}</Text>
+      </View>
+    </Pressable>
   );
 }
-
-const ar = StyleSheet.create({
-  row:          { flexDirection: 'row', gap: 12, paddingVertical: 12, borderBottomWidth: 0.5, borderBottomColor: '#F3F4F6', alignItems: 'flex-start' },
-  rowDone:      { opacity: 0.55 },
-  checkbox:     { width: 24, height: 24, borderRadius: 6, borderWidth: 1.5, borderColor: '#D1D5DB', alignItems: 'center', justifyContent: 'center', marginTop: 1 },
-  titleRow:     { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
-  title:        { fontSize: 14, fontWeight: '600', color: '#1D3557', flex: 1 },
-  titleDone:    { textDecorationLine: 'line-through', color: '#9CA3AF' },
-  priorityPill: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 5 },
-  priorityText: { fontSize: 10, fontWeight: '700', textTransform: 'uppercase' },
-  detail:       { fontSize: 13, color: '#6B7280', lineHeight: 20, paddingRight: 8 },
-});
-
-// ── Category section ──────────────────────────────────────────────────────────
-
-function CategorySection({
-  category,
-  actions,
-  completedIds,
-  onToggle,
-}: {
-  category: PrepAction['category'];
-  actions: PrepAction[];
-  completedIds: string[];
-  onToggle: (id: string) => void;
-}) {
-  if (actions.length === 0) return null;
-  const doneCount = actions.filter(a => completedIds.includes(a.id)).length;
-
-  return (
-    <View style={cs.section}>
-      <View style={cs.header}>
-        <Ionicons name={categoryIcon(category) as any} size={16} color={C.textSec} />
-        <Text style={cs.headerText}>{categoryLabel(category)}</Text>
-        <Text style={cs.count}>{doneCount}/{actions.length}</Text>
-      </View>
-      {actions.map(a => (
-        <ActionRow
-          key={a.id}
-          action={a}
-          isCompleted={completedIds.includes(a.id)}
-          onToggle={() => onToggle(a.id)}
-        />
-      ))}
-    </View>
-  );
-}
-
-const cs = StyleSheet.create({
-  section:    { backgroundColor: C.surface, borderRadius: 14, paddingHorizontal: 16, paddingBottom: 4, borderWidth: 0.5, borderColor: C.border },
-  header:     { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 14, borderBottomWidth: 0.5, borderBottomColor: C.border },
-  headerText: { flex: 1, fontSize: 14, fontWeight: '700', color: C.text },
-  count:      { fontSize: 13, color: C.textSec },
-});
-
-// ── Day plan row ──────────────────────────────────────────────────────────────
-
-function DayPlanRow({ plan }: { plan: PreparednessPlan['dayPlans'][0] }) {
-  const color = thermalLevelColor(plan.peakLevel);
-  return (
-    <View style={dp.row}>
-      <View style={dp.dayCol}>
-        <Text style={dp.dayLabel}>{plan.dayLabel}</Text>
-        <Text style={dp.dateLabel}>{plan.dateLabel}</Text>
-      </View>
-      <View style={[dp.levelPill, { backgroundColor: color + '18', borderColor: color + '50' }]}>
-        <Text style={[dp.levelText, { color }]}>{Math.round(plan.peakTemp)}°F</Text>
-      </View>
-      <View style={dp.planCol}>
-        <Text style={dp.bestWindow}>
-          <Text style={{ color: C.safe, fontWeight: '600' }}>✓ </Text>
-          {plan.bestWindow}
-        </Text>
-        <Text style={dp.focusAction}>{plan.focusAction}</Text>
-      </View>
-    </View>
-  );
-}
-
-const dp = StyleSheet.create({
-  row:        { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 12, borderBottomWidth: 0.5, borderBottomColor: '#F3F4F6' },
-  dayCol:     { width: 52 },
-  dayLabel:   { fontSize: 13, fontWeight: '700', color: C.text },
-  dateLabel:  { fontSize: 11, color: C.textSec },
-  levelPill:  { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, borderWidth: 1 },
-  levelText:  { fontSize: 12, fontWeight: '700' },
-  planCol:    { flex: 1, gap: 2 },
-  bestWindow: { fontSize: 12, color: C.textSec },
-  focusAction:{ fontSize: 12, color: C.text, fontWeight: '500' },
-});
-
-// ── Main screen ───────────────────────────────────────────────────────────────
 
 export default function PreparednessScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
+  const { isDark, formatTemp } = useSettings();
+  const c: Skin = isDark ? SKIN.dark : SKIN.light;
+  const borderWidth = isDark ? 1 : 2;
   const { snapshot } = useWeather();
 
-  const profile  = getHeatProfile();
-  // Bridge HeatProfile → ProfileInput for forecastEngine
-  const profileInput = {
-    name:          profile.name,
-    age:           parseInt(profile.age) || 35,
-    activityLevel: profile.activityLevel === 'medium' ? 'moderate' : profile.activityLevel,
-    threshold:     profile.alertThreshold,
-    conditions:    [
-      profile.hasDiabetes       && 'diabetes',
-      profile.hasHeartDisease   && 'heartDisease',
-      profile.hasRespiratoryIssues && 'respiratory',
-      profile.isElderly         && 'elderly',
-    ].filter(Boolean) as string[],
-    takesMedications: profile.takesMedications,
+  const [profile, setProfile] = useState(getHeatProfile());
+  useFocusEffect(useCallback(() => { setProfile(getHeatProfile()); }, []));
+
+  const plan = useMemo(
+    () => (snapshot ? generatePreparednessPlan(generateForecast(profile, snapshot), profile) : null),
+    [snapshot?.fetchedAt, profile],
+  );
+
+  const [completed, setCompleted] = useState<string[]>(getCompletedActions());
+  const toggle = (id: string) => {
+    haptics.selection();
+    setCompleted(toggleActionCompleted(id));
   };
 
-  const forecast = generateForecast(getRiskMultiplier(profile), profile, snapshot);
-  const plan     = generatePreparednessPlan(forecast, profile);
-
-  const [completedIds, setCompleted] = useState<string[]>(getCompletedActions());
-
-  const handleToggle = useCallback((id: string) => {
-    const updated = toggleActionCompleted(id);
-    setCompleted(updated);
-  }, []);
-
-  const severityColor = getSeverityColor(plan.severity);
-  const totalActions  = plan.actions.length;
-  const doneCount     = plan.actions.filter(a => completedIds.includes(a.id)).length;
-
-  // Group actions by category
-  const categories: PrepAction['category'][] = ['water', 'shelter', 'medical', 'supplies', 'social', 'planning'];
-  const byCategory = (cat: PrepAction['category']) => plan.actions.filter(a => a.category === cat);
+  const t = (f: number) => formatTemp(Math.round(fToC(f)), false);
 
   return (
-    <SafeAreaView style={s.container} edges={['top']}>
+    <View style={[styles.container, { backgroundColor: c.bg, paddingTop: insets.top }]}>
+      <StatusBar style={isDark ? 'light' : 'dark'} />
+      <Pressable onPress={() => router.back()} accessibilityRole="button" accessibilityLabel="Back to Plan" style={styles.back}>
+        <ChevronLeft size={24} color={c.accent} />
+        <Text style={[styles.backText, { color: c.accent }]}>Plan</Text>
+      </Pressable>
 
-      {/* Header */}
-      <View style={s.header}>
-        <Pressable onPress={() => router.back()} style={s.backBtn} accessibilityRole="button" accessibilityLabel="Go back">
-          <Ionicons name="chevron-back" size={24} color={C.text} />
-        </Pressable>
-        <Text style={s.headerTitle}>Preparedness</Text>
-        <View style={{ width: 40 }} />
-      </View>
-
-      <ScrollView style={s.scroll} contentContainerStyle={s.content} showsVerticalScrollIndicator={false}>
-
-        {/* Severity banner */}
-        <View style={[s.severityCard, { borderColor: severityColor, backgroundColor: severityColor + '10' }]}>
-          <View style={s.severityTop}>
-            <Ionicons name="warning" size={22} color={severityColor} />
-            <View style={{ flex: 1 }}>
-              <Text style={[s.severityTitle, { color: severityColor }]}>{plan.headline}</Text>
-              <Text style={s.severitySub}>{plan.summary}</Text>
-            </View>
-            <ProgressRing completed={doneCount} total={totalActions} color={severityColor} />
-          </View>
-          {doneCount === totalActions && totalActions > 0 && (
-            <View style={s.allDoneBanner}>
-              <Ionicons name="checkmark-circle" size={16} color={C.safe} />
-              <Text style={s.allDoneText}>All actions complete — you're prepared</Text>
-            </View>
-          )}
+      {!plan ? (
+        <View style={styles.centered}>
+          <ActivityIndicator size="large" color={c.accent} />
+          <Text style={[styles.loading, { color: c.muted }]}>Loading the forecast…</Text>
         </View>
+      ) : (() => {
+        const total = plan.actions.length;
+        const done = plan.actions.filter(a => completed.includes(a.id)).length;
+        const sevColor = c.severity[plan.severity];
+        return (
+          <ScrollView contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 32 }]}>
+            <Text style={[styles.title, { color: c.text }]} accessibilityRole="header">Be prepared</Text>
 
-        {/* Checklist */}
-        <Text style={s.sectionTitle}>Preparation checklist</Text>
-        {categories.map(cat => (
-          <CategorySection
-            key={cat}
-            category={cat}
-            actions={byCategory(cat)}
-            completedIds={completedIds}
-            onToggle={handleToggle}
-          />
-        ))}
-
-        {/* 5-day plan */}
-        <Text style={s.sectionTitle}>5-day plan</Text>
-        <View style={s.card}>
-          {plan.dayPlans.map((dp, i) => (
-            <DayPlanRow key={i} plan={dp} />
-          ))}
-        </View>
-
-        {/* Supply list */}
-        <Text style={s.sectionTitle}>Supply checklist</Text>
-        <View style={s.card}>
-          {plan.supplies.map((item, i) => (
-            <View key={i} style={[s.supplyRow, i === 0 && { borderTopWidth: 0 }]}>
-              <Ionicons
-                name={item.critical ? 'alert-circle' : 'checkmark-circle-outline'}
-                size={16}
-                color={item.critical ? '#DC2626' : C.textSec}
-              />
-              <Text style={[s.supplyName, item.critical && { fontWeight: '600' }]}>{item.name}</Text>
-              <Text style={s.supplyQty}>{item.quantity}</Text>
+            {/* Outlook */}
+            <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border, borderWidth }]}>
+              <View style={[styles.sevBar, { backgroundColor: sevColor }]} />
+              <Text style={[styles.headline, { color: c.text }]}>{plan.headline}</Text>
+              <Text style={[styles.body, { color: c.muted }]}>{plan.summary}</Text>
+              <View style={[styles.progressTrack, { backgroundColor: c.divider }]}>
+                <View style={[styles.progressFill, { backgroundColor: c.accent, width: `${total ? (done / total) * 100 : 0}%` }]} />
+              </View>
+              <Text style={[styles.progressText, { color: c.text }]}>
+                {done === total && total > 0 ? 'All done. You’re ready.' : `${done} of ${total} done`}
+              </Text>
             </View>
-          ))}
-        </View>
 
-      </ScrollView>
-    </SafeAreaView>
+            {/* Checklist */}
+            {CATEGORY_ORDER.map(cat => {
+              const items = plan.actions.filter(a => a.category === cat);
+              if (!items.length) return null;
+              return (
+                <View key={cat} style={styles.section}>
+                  <Text style={[styles.sectionLabel, { color: c.muted }]}>{categoryLabel(cat)}</Text>
+                  <View style={[styles.card, styles.noPad, { backgroundColor: c.card, borderColor: c.border, borderWidth }]}>
+                    {items.map((a, i) => (
+                      <ActionRow
+                        key={a.id}
+                        action={a}
+                        done={completed.includes(a.id)}
+                        onToggle={() => toggle(a.id)}
+                        c={c}
+                        last={i === items.length - 1}
+                      />
+                    ))}
+                  </View>
+                </View>
+              );
+            })}
+
+            {/* Day by day */}
+            <View style={styles.section}>
+              <Text style={[styles.sectionLabel, { color: c.muted }]}>Next 5 days</Text>
+              <View style={[styles.card, styles.noPad, { backgroundColor: c.card, borderColor: c.border, borderWidth }]}>
+                {plan.dayPlans.map((d, i) => (
+                  <View
+                    key={d.dateKey}
+                    accessible
+                    accessibilityLabel={`${d.dayLabel}, high ${t(d.highF)}, ${RISK_LABEL[d.level]}. ${d.bestWindow}. ${d.focusAction}`}
+                    style={[styles.dayRow, {
+                      borderBottomColor: c.divider,
+                      borderBottomWidth: i === plan.dayPlans.length - 1 ? 0 : StyleSheet.hairlineWidth,
+                    }]}
+                  >
+                    <View style={[styles.dayStripe, { backgroundColor: c.level[d.level] }]} />
+                    <View style={styles.dayCol}>
+                      <Text style={[styles.dayName, { color: c.text }]}>{d.dayLabel}</Text>
+                      <Text style={[styles.dayHigh, { color: c.muted }]}>{t(d.highF)}°</Text>
+                    </View>
+                    <View style={styles.flex1}>
+                      <Text style={[styles.dayLevel, { color: c.text }]}>{RISK_LABEL[d.level]}</Text>
+                      <Text style={[styles.dayText, { color: c.muted }]}>{d.bestWindow}</Text>
+                      <Text style={[styles.dayText, { color: c.text }]}>{d.focusAction}</Text>
+                    </View>
+                  </View>
+                ))}
+              </View>
+            </View>
+
+            {/* Supplies */}
+            <View style={styles.section}>
+              <Text style={[styles.sectionLabel, { color: c.muted }]}>Supplies</Text>
+              <View style={[styles.card, styles.noPad, { backgroundColor: c.card, borderColor: c.border, borderWidth }]}>
+                {plan.supplies.map((s, i) => (
+                  <View
+                    key={s.name}
+                    style={[styles.supplyRow, {
+                      borderBottomColor: c.divider,
+                      borderBottomWidth: i === plan.supplies.length - 1 ? 0 : StyleSheet.hairlineWidth,
+                    }]}
+                  >
+                    <Text style={[styles.supplyName, { color: c.text, fontWeight: s.critical ? '800' : '600' }]}>{s.name}</Text>
+                    <Text style={[styles.supplyQty, { color: c.muted }]}>{s.quantity}</Text>
+                  </View>
+                ))}
+              </View>
+            </View>
+
+            <Text style={[styles.footer, { color: c.muted }]}>
+              General guidance, not medical advice. Ask your doctor how heat affects you.
+            </Text>
+          </ScrollView>
+        );
+      })()}
+    </View>
   );
 }
 
-const s = StyleSheet.create({
-  container:    { flex: 1, backgroundColor: C.bg },
-  header:       { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 0.5, borderBottomColor: C.border },
-  backBtn:      { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-  headerTitle:  { fontSize: 17, fontWeight: '600', color: C.text },
-  scroll:       { flex: 1 },
-  content:      { padding: 16, gap: 12, paddingBottom: 48 },
-  sectionTitle: { fontSize: 15, fontWeight: '700', color: C.text, marginTop: 4 },
+const styles = StyleSheet.create({
+  container: { flex: 1 },
+  centered: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 },
+  loading: { fontSize: 16 },
+  back: { flexDirection: 'row', alignItems: 'center', minHeight: 44, paddingHorizontal: 12, alignSelf: 'flex-start' },
+  backText: { fontSize: 17, fontWeight: '700' },
+  content: { paddingHorizontal: 20, gap: 14 },
+  flex1: { flex: 1 },
+  title: { fontSize: 30, fontWeight: '800', letterSpacing: -0.3 },
 
-  severityCard: { borderRadius: 16, borderWidth: 1.5, padding: 16, gap: 12 },
-  severityTop:  { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
-  severityTitle:{ fontSize: 17, fontWeight: '700', marginBottom: 4 },
-  severitySub:  { fontSize: 13, color: C.textSec, lineHeight: 20 },
-  allDoneBanner:{ flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: C.safeBg, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8 },
-  allDoneText:  { fontSize: 13, color: C.safe, fontWeight: '600' },
+  card: { borderRadius: 16, padding: 16, gap: 8, overflow: 'hidden' },
+  noPad: { padding: 0, gap: 0 },
+  sevBar: { height: 6, borderRadius: 3, marginBottom: 4 },
+  headline: { fontSize: 20, fontWeight: '800', lineHeight: 26 },
+  body: { fontSize: 15, lineHeight: 21 },
+  progressTrack: { height: 10, borderRadius: 5, overflow: 'hidden', marginTop: 6 },
+  progressFill: { height: '100%', borderRadius: 5 },
+  progressText: { fontSize: 15, fontWeight: '700' },
 
-  card:         { backgroundColor: C.surface, borderRadius: 14, paddingHorizontal: 16, paddingBottom: 4, borderWidth: 0.5, borderColor: C.border },
-  supplyRow:    { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 12, borderTopWidth: 0.5, borderTopColor: '#F3F4F6' },
-  supplyName:   { flex: 1, fontSize: 13, color: C.text },
-  supplyQty:    { fontSize: 12, color: C.textSec },
+  section: { gap: 8 },
+  sectionLabel: { fontSize: 13, fontWeight: '800', letterSpacing: 0.8, textTransform: 'uppercase', marginTop: 4 },
+
+  actionRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 14, paddingHorizontal: 16, paddingVertical: 14, minHeight: 56 },
+  checkbox: { width: 28, height: 28, borderRadius: 8, borderWidth: 2, alignItems: 'center', justifyContent: 'center', marginTop: 1 },
+  actionTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  actionTitle: { fontSize: 17, fontWeight: '800', flexShrink: 1 },
+  actionDetail: { fontSize: 14, lineHeight: 19, marginTop: 2 },
+
+  dayRow: { flexDirection: 'row', alignItems: 'stretch', gap: 12, paddingRight: 16, paddingVertical: 12 },
+  dayStripe: { width: 6 },
+  dayCol: { width: 72 },
+  dayName: { fontSize: 16, fontWeight: '800' },
+  dayHigh: { fontSize: 15, fontWeight: '700', fontVariant: ['tabular-nums'] },
+  dayLevel: { fontSize: 15, fontWeight: '800' },
+  dayText: { fontSize: 14, lineHeight: 19 },
+
+  supplyRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: 12, minHeight: 48 },
+  supplyName: { flex: 1, fontSize: 16 },
+  supplyQty: { fontSize: 14, textAlign: 'right' },
+
+  footer: { fontSize: 12, textAlign: 'center', marginTop: 4 },
 });

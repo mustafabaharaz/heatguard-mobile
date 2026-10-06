@@ -293,9 +293,6 @@ export default function TabLayout() {
             tabBarAccessibilityLabel: 'Profile, heat profile and emergency contacts',
           }}
         />
-
-        {/* Community is hidden in v1. Moves to the separate community app. */}
-        <Tabs.Screen name="community" options={{ href: null }} />
       </Tabs>
 
       <EmergencySOSModal visible={sosVisible} onClose={() => setSosVisible(false)} />

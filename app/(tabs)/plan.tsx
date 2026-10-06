@@ -1,8 +1,9 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // FILE: app/(tabs)/plan.tsx
 // HeatGuard · Plan
-//  - 5-day heat strip (tap a day)
-//  - Safer-hours bar for that day from the real hourly "feels like" forecast
+//  - 5-day heat strip (tap a day), each day's level from the shared risk
+//    engine (same level Home shows for today)
+//  - Safer-hours bar for that day from the real hourly forecast
 //  - "What are you planning?" → activity prep screen
 //  - Active trip check-in, if one is running
 // Skins: High Sun (light) / Night Shift (dark).
@@ -18,8 +19,10 @@ import { useSettings } from '../../src/context/SettingsContext';
 import { useWeather } from '../../src/services/weather/useWeather';
 import { getUpcomingDateKeys, getTodayKey, fToC } from '../../src/services/weather/weatherStore';
 import {
-  ACTIVITIES, dayBands, saferWindowText, limitFor, getActivity, type HourBand,
+  ACTIVITIES, dayBands, saferWindowText, getActivity, type HourBand,
 } from '../../src/features/plan/activityPrep';
+import { getHeatProfile } from '../../src/features/profile/storage/profileStorage';
+import { assessRisk, RISK_LABEL, type RiskLevel } from '../../src/features/risk/riskEngine';
 import { getActiveTrip, endTrip, formatClock, isTripOverdue, type Trip } from '../../src/features/plan/tripCheckIn';
 
 const SKIN = {
@@ -35,6 +38,7 @@ const SKIN = {
     chipActiveText: '#FFFFFF',
     pressed: '#ECECE6',
     band: { good: '#15803D', caution: '#FACC15', danger: '#B91C1C' } as Record<HourBand, string>,
+    level: { low: '#15803D', moderate: '#FACC15', high: '#EA580C', veryHigh: '#B91C1C' } as Record<RiskLevel, string>,
     tripBg: '#0A0A0A',
     tripText: '#FFFFFF',
     tripMuted: '#D4D4CF',
@@ -51,6 +55,7 @@ const SKIN = {
     chipActiveText: '#04121F',
     pressed: '#1A2540',
     band: { good: '#4ADE80', caution: '#FACC15', danger: '#F87171' } as Record<HourBand, string>,
+    level: { low: '#4ADE80', moderate: '#FACC15', high: '#FB923C', veryHigh: '#F87171' } as Record<RiskLevel, string>,
     tripBg: '#1A2540',
     tripText: '#F1F5F9',
     tripMuted: '#A3B1C9',
@@ -58,14 +63,6 @@ const SKIN = {
 };
 
 type Skin = typeof SKIN.light;
-
-// Day color from the day's max "feels like" (°F)
-function dayLevel(feelsMaxF: number): { label: string; key: HourBand | 'crisis' } {
-  if (feelsMaxF >= 104) return { label: 'Extreme', key: 'danger' };
-  if (feelsMaxF >= 95) return { label: 'High', key: 'danger' };
-  if (feelsMaxF >= 86) return { label: 'Caution', key: 'caution' };
-  return { label: 'Safe', key: 'good' };
-}
 
 function dayName(dateKey: string, todayKey: string): { short: string; full: string } {
   if (dateKey === todayKey) return { short: 'Today', full: 'Today' };
@@ -92,19 +89,27 @@ export default function PlanScreen() {
     setTrip(getActiveTrip());
   }, []));
 
+  // Re-read on focus so profile edits show up right away
+  const [profile, setProfile] = useState(getHeatProfile());
+  useFocusEffect(useCallback(() => { setProfile(getHeatProfile()); }, []));
+
   const days = useMemo(() => {
     if (!snapshot) return [];
     const todayKey = getTodayKey(snapshot);
     return getUpcomingDateKeys(snapshot, 5)
       .map(k => snapshot.daily.find(d => d.dateKey === k))
       .filter((d): d is NonNullable<typeof d> => !!d)
-      .map(d => ({ ...d, name: dayName(d.dateKey, todayKey), level: dayLevel(d.feelsLikeMaxF) }));
-  }, [snapshot?.fetchedAt]);
+      .map(d => ({
+        ...d,
+        name: dayName(d.dateKey, todayKey),
+        level: assessRisk(Math.max(d.feelsLikeMaxF, d.highF), profile).level,
+      }));
+  }, [snapshot?.fetchedAt, profile]);
 
   const sel = days[Math.min(selected, Math.max(days.length - 1, 0))];
   const bands = useMemo(
-    () => (snapshot && sel ? dayBands(snapshot, sel.dateKey, limitFor(getActivity('other'))) : []),
-    [snapshot?.fetchedAt, sel?.dateKey],
+    () => (snapshot && sel ? dayBands(snapshot, sel.dateKey, getActivity('other'), profile) : []),
+    [snapshot?.fetchedAt, sel?.dateKey, profile],
   );
 
   const handleEndTrip = async () => {
@@ -155,14 +160,14 @@ export default function PlanScreen() {
         <View style={styles.days}>
           {days.map((d, i) => {
             const active = i === selected;
-            const bar = d.level.key === 'crisis' ? c.band.danger : c.band[d.level.key as HourBand];
+            const bar = c.level[d.level];
             return (
               <Pressable
                 key={d.dateKey}
                 onPress={() => setSelected(i)}
                 accessibilityRole="button"
                 accessibilityState={{ selected: active }}
-                accessibilityLabel={`${d.name.full}, high ${formatTemp(Math.round(fToC(d.highF)))}, ${d.level.label}`}
+                accessibilityLabel={`${d.name.full}, high ${formatTemp(Math.round(fToC(d.highF)))}, heat risk ${RISK_LABEL[d.level]}`}
                 style={[
                   styles.day,
                   {
@@ -175,7 +180,7 @@ export default function PlanScreen() {
                 <View style={[styles.dayBar, { backgroundColor: bar }]} />
                 <Text style={[styles.dayName, { color: c.text }]}>{d.name.short}</Text>
                 <Text style={[styles.dayHigh, { color: c.text }]}>{formatTemp(Math.round(fToC(d.highF)), false)}</Text>
-                <Text style={[styles.dayLevel, { color: c.muted }]} numberOfLines={1}>{d.level.label}</Text>
+                <Text style={[styles.dayLevel, { color: c.muted }]} numberOfLines={1} adjustsFontSizeToFit>{RISK_LABEL[d.level]}</Text>
               </Pressable>
             );
           })}
@@ -196,6 +201,7 @@ export default function PlanScreen() {
               <Text style={[styles.bandLabel, { color: c.muted }]}>9 PM</Text>
             </View>
             <Text style={[styles.saferText, { color: c.text }]}>{saferWindowText(bands)}</Text>
+            <Text style={[styles.saferNote, { color: c.muted }]}>Based on your heat profile, same as your risk level on Home.</Text>
           </View>
         )}
 
@@ -278,6 +284,7 @@ const styles = StyleSheet.create({
   bandLabels: { flexDirection: 'row', justifyContent: 'space-between' },
   bandLabel: { fontSize: 12, fontWeight: '700' },
   saferText: { fontSize: 17, fontWeight: '800', lineHeight: 23 },
+  saferNote: { fontSize: 13, lineHeight: 18 },
 
   sectionTitle: { fontSize: 19, fontWeight: '800', marginTop: 4 },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },

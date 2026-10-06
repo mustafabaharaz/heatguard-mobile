@@ -6,7 +6,7 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "automatic",
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
@@ -36,7 +36,7 @@
       [
         "expo-location",
         {
-          "locationWhenInUsePermission": "HeatGuard uses your location to show the heat conditions and forecast where you are."
+          "locationWhenInUsePermission": "HeatGuard uses your location to show heat conditions and the forecast where you are, find the nearest cooling centers, and add your location to emergency texts you choose to send."
         }
       ],
       "./plugins/withFmtCxx17"

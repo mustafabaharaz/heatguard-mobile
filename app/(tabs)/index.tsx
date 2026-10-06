@@ -41,7 +41,6 @@ import { getNotificationPrefs } from '../../src/features/settings/appPrefs';
 import {
   getHeatProfile, hasVehicleDependents, hasCoolingRisk, isHomeVulnerable, type HeatProfile,
 } from '../../src/features/profile/storage/profileStorage';
-import { PassiveTracker } from '../../src/features/exposure/passiveTracker';
 import {
   calculateHydrationTarget, computeHydrationSummary, mlToOz, type HydrationSummary,
 } from '../../src/features/hydration/hydrationEngine';
@@ -241,14 +240,10 @@ export default function HomeScreen() {
     return () => clearInterval(id);
   }, [vehicleSession, trip]);
 
-  // React to each new weather reading: exposure tracker + heat alerts
+  // React to each new weather reading: heat alerts
   useEffect(() => {
     if (!snapshot) return;
-    const tempF = snapshot.current.tempF;
     const feelsC = fToC(snapshot.current.feelsLikeF);
-    if (PassiveTracker.getState().isTracking) {
-      Promise.resolve(PassiveTracker.updateTemperature(tempF)).catch(() => {});
-    }
     const threshold = profile.alertThreshold ?? 35;
     const rounded = Math.round(feelsC);
     if (getNotificationPrefs().heatAlerts && rounded >= threshold && rounded !== lastAlertTemp.current) {

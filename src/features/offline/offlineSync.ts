@@ -1,12 +1,14 @@
-// ─────────────────────────────────────────────
-// Offline Sync Orchestrator
-// Pre-fetches all critical data when online,
-// tracks sync state, triggers background refresh
-// ─────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// FILE: src/features/offline/offlineSync.ts
+// HeatGuard · Offline sync
+// Keeps the life-critical reference data (heat illness signs, emergency steps)
+// and the heat profile in the offline cache. All of it is bundled with the app
+// or stored on the phone, so nothing here depends on a server.
+// Emergency contacts and saved Cool Spots have their own on-device stores.
+// ─────────────────────────────────────────────────────────────────────────────
 
 import {
   cacheSet,
-  cacheGet,
   setLastFullSync,
   getLastFullSync,
   CACHE_KEYS,
@@ -14,63 +16,68 @@ import {
   getCacheInventory,
 } from './offlineCache';
 import { getHeatProfile } from '../profile/storage/profileStorage';
-import { computeNeighborhoodSnapshot } from '../neighborhood/neighborhoodEngine';
-import { computeNetworkSnapshot } from '../network/networkEngine';
 
-// ─── Critical Static Data ─────────────────────────────────────────────────────
-// This data is hardcoded for offline safety — no network needed ever
+// ─── Critical static data (bundled, works with no network ever) ──────────────
+// Wording follows CDC "Heat-related illnesses" guidance.
 
 export const HEAT_SYMPTOMS_DATA = [
   {
-    id: 'exhaustion',
-    name: 'Heat Exhaustion',
-    severity: 'high',
-    symptoms: ['Heavy sweating', 'Cold, pale, clammy skin', 'Weak pulse', 'Nausea or vomiting', 'Muscle cramps', 'Tiredness or weakness', 'Dizziness', 'Headache', 'Fainting'],
-    action: 'Move to cool place. Loosen clothing. Apply cool wet cloths. Sip water. Call doctor if vomiting begins.',
-    callEmergency: false,
-  },
-  {
     id: 'stroke',
-    name: 'Heat Stroke',
+    name: 'Heat stroke',
     severity: 'crisis',
-    symptoms: ['Body temp above 103°F', 'Hot, red, dry or damp skin', 'Rapid strong pulse', 'Confusion or altered mental state', 'Loss of consciousness', 'No sweating despite heat'],
-    action: 'CALL 911 IMMEDIATELY. Move to cool place. Cool person rapidly — ice packs to neck, armpits, groin. Do NOT give fluids.',
+    symptoms: [
+      'Body temperature 103°F or higher',
+      'Hot, red, dry or damp skin',
+      'Fast, strong pulse',
+      'Headache, dizziness, nausea',
+      'Confusion',
+      'Passing out',
+    ],
+    action: 'Call 911 right away. Move the person somewhere cooler. Cool them with cool cloths or a cool bath. Do not give them anything to drink.',
     callEmergency: true,
   },
   {
-    id: 'cramps',
-    name: 'Heat Cramps',
-    severity: 'moderate',
-    symptoms: ['Muscle cramps or spasms', 'Heavy sweating during exercise', 'Pain in abdomen, arms, or legs'],
-    action: 'Stop activity. Move to cool place. Drink water or sports drink. Wait for cramps to subside before resuming.',
+    id: 'exhaustion',
+    name: 'Heat exhaustion',
+    severity: 'high',
+    symptoms: [
+      'Heavy sweating',
+      'Cold, pale, clammy skin',
+      'Fast, weak pulse',
+      'Nausea or vomiting',
+      'Muscle cramps',
+      'Tiredness or weakness',
+      'Dizziness or headache',
+      'Fainting',
+    ],
+    action: 'Move somewhere cool. Loosen clothes. Put cool, wet cloths on the body or take a cool bath. Sip water. Get medical help right away if they throw up, symptoms get worse, or last more than 1 hour.',
     callEmergency: false,
   },
   {
-    id: 'syncope',
-    name: 'Heat Syncope',
+    id: 'cramps',
+    name: 'Heat cramps',
     severity: 'moderate',
-    symptoms: ['Fainting or near-fainting', 'Dizziness when standing', 'Light-headedness'],
-    action: 'Sit or lie down in cool place. Drink water. Raise legs if lying down. Seek medical attention if it persists.',
+    symptoms: ['Heavy sweating during hard activity', 'Muscle pain or spasms'],
+    action: 'Stop the activity and move somewhere cool. Drink water or a sports drink. Wait for cramps to go away before starting again. Get medical help if cramps last more than 1 hour.',
     callEmergency: false,
   },
 ];
 
 export const SOS_INSTRUCTIONS_DATA = {
   steps: [
-    { step: 1, action: 'Move to shade or cool indoor space immediately' },
-    { step: 2, action: 'Call 911 if confusion, loss of consciousness, or no sweating' },
-    { step: 3, action: 'Remove excess clothing — loosen anything tight' },
-    { step: 4, action: 'Apply cool water or ice to neck, armpits, and groin' },
-    { step: 5, action: 'Sip water — do not drink fast if nauseated' },
-    { step: 6, action: 'Notify an emergency contact of your location' },
-    { step: 7, action: 'Do not leave the person alone until help arrives' },
+    { step: 1, action: 'Call 911 if someone is confused, passes out, or has hot skin and a very high temperature' },
+    { step: 2, action: 'Move to shade or a cool indoor space' },
+    { step: 3, action: 'Loosen or remove extra clothing' },
+    { step: 4, action: 'Cool the body with cool, wet cloths, a cool bath, or ice packs on the neck and armpits' },
+    { step: 5, action: 'If they are awake and not throwing up, give sips of water (not for heat stroke)' },
+    { step: 6, action: 'Stay with them until help arrives' },
   ],
   emergencyNumber: '911',
   heatlineNumber: '2-1-1',
   note: 'Heat stroke is a medical emergency. When in doubt, call 911.',
 };
 
-// ─── Sync Result ──────────────────────────────────────────────────────────────
+// ─── Sync ─────────────────────────────────────────────────────────────────────
 
 export interface SyncResult {
   success: boolean;
@@ -80,41 +87,15 @@ export interface SyncResult {
   errors: string[];
 }
 
-// ─── Sync Functions ───────────────────────────────────────────────────────────
-
 async function syncCriticalStatic(): Promise<void> {
-  // Always re-cache critical static data — it's fast and ensures freshness
   await cacheSet(CACHE_KEYS.HEAT_SYMPTOMS, HEAT_SYMPTOMS_DATA);
   await cacheSet(CACHE_KEYS.SOS_INSTRUCTIONS, SOS_INSTRUCTIONS_DATA);
 }
 
 async function syncHeatProfile(): Promise<void> {
-  try {
-    const profile = await getHeatProfile();
-    if (profile) {
-      await cacheSet(CACHE_KEYS.HEAT_PROFILE, profile);
-    }
-  } catch {
-    // Profile might not exist yet
-  }
+  const profile = getHeatProfile();
+  if (profile) await cacheSet(CACHE_KEYS.HEAT_PROFILE, profile);
 }
-
-async function syncShelterList(): Promise<void> {
-  const { SHELTERS } = require('../network/networkEngine');
-  await cacheSet(CACHE_KEYS.SHELTER_LIST, SHELTERS);
-}
-
-async function syncNeighborhoodSnapshot(): Promise<void> {
-  const snapshot = computeNeighborhoodSnapshot(108, 20, 9);
-  await cacheSet(CACHE_KEYS.NEIGHBORHOOD_SNAP, snapshot);
-}
-
-async function syncNetworkSnapshot(): Promise<void> {
-  const snapshot = computeNetworkSnapshot();
-  await cacheSet(CACHE_KEYS.NETWORK_SNAP, snapshot);
-}
-
-// ─── Full Sync ────────────────────────────────────────────────────────────────
 
 export async function runFullSync(): Promise<SyncResult> {
   const errors: string[] = [];
@@ -122,11 +103,8 @@ export async function runFullSync(): Promise<SyncResult> {
   let itemsFailed = 0;
 
   const tasks: Array<{ name: string; fn: () => Promise<void> }> = [
-    { name: 'Critical symptoms',    fn: syncCriticalStatic },
-    { name: 'Heat profile',         fn: syncHeatProfile },
-    { name: 'Shelter list',         fn: syncShelterList },
-    { name: 'Neighborhood data',    fn: syncNeighborhoodSnapshot },
-    { name: 'Network snapshot',     fn: syncNetworkSnapshot },
+    { name: 'Critical safety info', fn: syncCriticalStatic },
+    { name: 'Heat profile', fn: syncHeatProfile },
   ];
 
   for (const task of tasks) {
@@ -139,45 +117,22 @@ export async function runFullSync(): Promise<SyncResult> {
     }
   }
 
-  const syncedAt = Date.now();
-  if (itemsFailed === 0) {
-    await setLastFullSync();
-  }
-
-  return {
-    success: itemsFailed === 0,
-    syncedAt,
-    itemsSynced,
-    itemsFailed,
-    errors,
-  };
+  if (itemsFailed === 0) await setLastFullSync();
+  return { success: itemsFailed === 0, syncedAt: Date.now(), itemsSynced, itemsFailed, errors };
 }
 
-// ─── Smart Sync ───────────────────────────────────────────────────────────────
-// Only re-syncs if data is stale — call on app foreground
-
+/** Called when the app comes to the foreground. Cheap: no network. */
 export async function runSmartSync(): Promise<void> {
-  // Always sync critical static — near-zero cost
   await syncCriticalStatic();
-
-  // Check last full sync age
   const lastSync = await getLastFullSync();
   const ageMs = lastSync ? Date.now() - lastSync : Infinity;
-
-  // Re-sync important data if > 1 hour old
   if (ageMs > 60 * 60_000) {
-    await syncHeatProfile();
-    await syncShelterList();
-  }
-
-  // Re-sync fresh data if > 15 minutes old
-  if (ageMs > 15 * 60_000) {
-    await syncNeighborhoodSnapshot();
-    await syncNetworkSnapshot();
+    await syncHeatProfile().catch(() => {});
+    await setLastFullSync();
   }
 }
 
-// ─── Sync Status ──────────────────────────────────────────────────────────────
+// ─── Status ───────────────────────────────────────────────────────────────────
 
 export interface SyncStatus {
   lastSyncAt: number | null;
@@ -199,18 +154,13 @@ function ageLabel(ms: number | null): string {
 
 export async function getSyncStatus(): Promise<SyncStatus> {
   const lastSync = await getLastFullSync();
-  const ageMs = lastSync ? Date.now() - lastSync : null;
   const inventory = await getCacheInventory();
-
-  const criticalItems = inventory.filter((i) => i.priority === 'critical');
-  const criticalCached = criticalItems.every((i) => i.hasData);
-  const isFullyCached = inventory.every((i) => i.hasData);
-
+  const critical = inventory.filter(i => i.priority === 'critical');
   return {
     lastSyncAt: lastSync,
-    lastSyncAgeLabel: ageLabel(ageMs),
-    isFullyCached,
-    criticalCached,
+    lastSyncAgeLabel: ageLabel(lastSync ? Date.now() - lastSync : null),
+    isFullyCached: inventory.every(i => i.hasData),
+    criticalCached: critical.every(i => i.hasData),
     inventory,
   };
 }

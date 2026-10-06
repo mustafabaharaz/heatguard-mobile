@@ -1,7 +1,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// FILE: app/activity/[id].tsx   (NEW FILE + NEW FOLDER "activity")
+// FILE: app/activity/[id].tsx
 // HeatGuard · Activity prep
-//  - Safer start times for the chosen day (real hourly forecast)
+//  - Safer start times for the chosen day (real hourly forecast, judged by
+//    the shared risk engine with this user's profile)
 //  - "Be back by" time for the chosen start
 //  - Activity checklist
 //  - Start trip check-in (today only)
@@ -17,8 +18,9 @@ import { useSettings } from '../../src/context/SettingsContext';
 import { useWeather } from '../../src/services/weather/useWeather';
 import { getTodayKey } from '../../src/services/weather/weatherStore';
 import { registerForPushNotifications } from '../../src/services/notifications/push';
+import { getHeatProfile } from '../../src/features/profile/storage/profileStorage';
 import {
-  getActivity, dayBands, limitFor, backByHour, formatHour,
+  getActivity, dayBands, backByHour, formatHour,
 } from '../../src/features/plan/activityPrep';
 import {
   getActiveTrip, startTrip, endTrip, formatClock, type Trip,
@@ -88,7 +90,7 @@ export default function ActivityPrepScreen() {
   const isToday = dateKey === todayKey;
 
   const bands = useMemo(
-    () => (snapshot && dateKey ? dayBands(snapshot, dateKey, limitFor(activity)) : []),
+    () => (snapshot && dateKey ? dayBands(snapshot, dateKey, activity, getHeatProfile()) : []),
     [snapshot?.fetchedAt, dateKey, activity.id],
   );
 
@@ -188,8 +190,8 @@ export default function ActivityPrepScreen() {
               </Text>
               <Text style={[styles.heroSub, { color: c.heroMuted }]}>
                 {typeof backBy === 'number'
-                  ? `After that it gets too hot for ${activity.strenuous ? 'hard activity' : 'being outside'}.`
-                  : 'It stays under the safer limit the rest of the day. Still take breaks.'}
+                  ? `After that, your heat risk ${activity.strenuous ? 'for hard activity' : 'outside'} is Very high.`
+                  : 'It stays below Very high the rest of the day. Still take breaks and drink water.'}
               </Text>
             </View>
           </>

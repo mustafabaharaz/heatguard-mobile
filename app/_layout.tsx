@@ -15,7 +15,6 @@ export default function RootLayout() {
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="emergency/contacts" />
         <Stack.Screen name="settings" />
-        <Stack.Screen name="exposure/tracker" />
         <Stack.Screen name="profile/medications" />
         <Stack.Screen name="cooldown/timer" />
         <Stack.Screen name="preparedness/index" />
