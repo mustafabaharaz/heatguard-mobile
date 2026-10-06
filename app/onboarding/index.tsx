@@ -1,7 +1,9 @@
 // ─────────────────────────────────────────────────────────────────────────────
+// FILE: app/onboarding/index.tsx
 // HeatGuard · Onboarding
-// Three short intro slides, then a required safety & medical acknowledgment.
-// Shown on first launch (and again if the disclaimer version changes).
+// Three short intro slides → "Who are you protecting?" → required safety &
+// medical acknowledgment. Shown on first launch (and again if the disclaimer
+// version changes).
 // ─────────────────────────────────────────────────────────────────────────────
 
 import React, { useRef, useState } from 'react';
@@ -20,19 +22,37 @@ import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import HeatGuardMark from '../../src/components/brand/HeatGuardMark';
+import HouseholdQuestions from '../../src/components/profile/HouseholdQuestions';
 import { DISCLAIMER_POINTS, DISCLAIMER_TITLE } from '../../src/content/disclaimer';
 import { acceptDisclaimer } from '../../src/features/settings/appPrefs';
+import {
+  getHeatProfile,
+  saveHouseholdAnswers,
+  type HouseholdAnswers,
+} from '../../src/features/profile/storage/profileStorage';
 
 const COLORS = {
   ocean: '#1D3557',
   glacier: '#8ECAE6',
   ember: '#E76F51',
   lava: '#E63946',
+  accent: '#0B4FD6',
   text: '#1D3557',
   textSecondary: '#4B5563',
   border: '#E5E7EB',
   surface: '#F9FAFB',
   white: '#FFFFFF',
+  selectedBg: '#EAF0FF',
+};
+
+const HOUSEHOLD_COLORS = {
+  text: COLORS.text,
+  muted: COLORS.textSecondary,
+  card: COLORS.white,
+  border: '#D1D5DB',
+  accent: COLORS.accent,
+  onAccent: COLORS.white,
+  selectedBg: COLORS.selectedBg,
 };
 
 type IconName = React.ComponentProps<typeof Ionicons>['name'];
@@ -53,8 +73,8 @@ const SLIDES: { icon: IconName; color: string; title: string; body: string }[] =
   {
     icon: 'call-outline',
     color: COLORS.lava,
-    title: 'Help in one tap',
-    body: 'SOS opens a text to your emergency contacts with your location, or a 911 call. Add your contacts in Profile.',
+    title: 'Help with one hold',
+    body: 'Press and hold the red SOS button to call 911 or text your emergency contacts your location. Add your contacts in Profile.',
   },
 ];
 
@@ -64,8 +84,21 @@ export default function OnboardingScreen() {
   const scrollRef = useRef<ScrollView>(null);
   const [index, setIndex] = useState(0);
 
-  const lastIndex = SLIDES.length; // disclaimer page comes after the slides
-  const onDisclaimer = index === lastIndex;
+  const [household, setHousehold] = useState<HouseholdAnswers>(() => {
+    const p = getHeatProfile();
+    return {
+      drivesWithKids: p.drivesWithKids,
+      drivesWithPets: p.drivesWithPets,
+      worksOutdoors: p.worksOutdoors,
+      livesAlone: p.livesAlone,
+    };
+  });
+
+  const householdIndex = SLIDES.length;      // after the intro slides
+  const disclaimerIndex = SLIDES.length + 1; // last page
+  const onHousehold = index === householdIndex;
+  const onDisclaimer = index === disclaimerIndex;
+  const pageCount = SLIDES.length + 2;
 
   const goTo = (i: number) => {
     setIndex(i);
@@ -77,6 +110,7 @@ export default function OnboardingScreen() {
   };
 
   const handleAccept = () => {
+    saveHouseholdAnswers(household);
     acceptDisclaimer();
     router.replace('/(tabs)');
   };
@@ -87,12 +121,12 @@ export default function OnboardingScreen() {
 
       <View style={styles.topBar}>
         <HeatGuardMark size={26} />
-        {!onDisclaimer && (
+        {index < householdIndex && (
           <TouchableOpacity
-            onPress={() => goTo(lastIndex)}
+            onPress={() => goTo(householdIndex)}
             style={styles.skipButton}
             accessibilityRole="button"
-            accessibilityLabel="Skip to safety information"
+            accessibilityLabel="Skip intro"
           >
             <Text style={styles.skipText}>Skip</Text>
           </TouchableOpacity>
@@ -117,10 +151,19 @@ export default function OnboardingScreen() {
           </View>
         ))}
 
+        {/* Who are you protecting? */}
+        <ScrollView style={{ width }} contentContainerStyle={styles.formPage}>
+          <Text style={styles.formTitle}>Who are you protecting?</Text>
+          <Text style={styles.formIntro}>
+            Tap everything that fits. HeatGuard puts the right tools on your home screen. You can change this anytime in Profile.
+          </Text>
+          <HouseholdQuestions value={household} onChange={setHousehold} colors={HOUSEHOLD_COLORS} />
+        </ScrollView>
+
         {/* Safety & medical acknowledgment */}
-        <ScrollView style={{ width }} contentContainerStyle={styles.disclaimerPage}>
-          <Text style={styles.disclaimerTitle}>{DISCLAIMER_TITLE}</Text>
-          <Text style={styles.disclaimerIntro}>Please read this once. It matters for your safety.</Text>
+        <ScrollView style={{ width }} contentContainerStyle={styles.formPage}>
+          <Text style={styles.formTitle}>{DISCLAIMER_TITLE}</Text>
+          <Text style={styles.formIntro}>Please read this once. It matters for your safety.</Text>
           {DISCLAIMER_POINTS.map(point => (
             <View key={point.text} style={styles.point}>
               <Ionicons name={point.icon as IconName} size={22} color={COLORS.ocean} style={styles.pointIcon} />
@@ -131,7 +174,7 @@ export default function OnboardingScreen() {
       </ScrollView>
 
       <View style={styles.dots} accessibilityElementsHidden>
-        {[...SLIDES, null].map((_, i) => (
+        {Array.from({ length: pageCount }).map((_, i) => (
           <View key={i} style={[styles.dot, i === index && styles.dotActive]} />
         ))}
       </View>
@@ -154,7 +197,7 @@ export default function OnboardingScreen() {
             activeOpacity={0.85}
             accessibilityRole="button"
           >
-            <Text style={styles.primaryButtonText}>Next</Text>
+            <Text style={styles.primaryButtonText}>{onHousehold ? 'Continue' : 'Next'}</Text>
           </TouchableOpacity>
         )}
       </View>
@@ -185,9 +228,9 @@ const styles = StyleSheet.create({
   },
   title: { fontSize: 26, fontWeight: '700', color: COLORS.text, textAlign: 'center', marginBottom: 14 },
   body: { fontSize: 17, lineHeight: 26, color: COLORS.textSecondary, textAlign: 'center', maxWidth: 360 },
-  disclaimerPage: { paddingHorizontal: 24, paddingTop: 12, paddingBottom: 24 },
-  disclaimerTitle: { fontSize: 28, fontWeight: '700', color: COLORS.text, marginBottom: 6 },
-  disclaimerIntro: { fontSize: 16, color: COLORS.textSecondary, marginBottom: 20 },
+  formPage: { paddingHorizontal: 24, paddingTop: 12, paddingBottom: 24 },
+  formTitle: { fontSize: 28, fontWeight: '700', color: COLORS.text, marginBottom: 6 },
+  formIntro: { fontSize: 16, lineHeight: 23, color: COLORS.textSecondary, marginBottom: 20 },
   point: {
     flexDirection: 'row',
     alignItems: 'flex-start',

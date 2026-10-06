@@ -1,316 +1,259 @@
-import { useSettings } from '../../src/context/SettingsContext';
-import { Ionicons } from '@expo/vector-icons';
-import haptics from '../../src/utils/haptics';
-import { SkeletonThermalCard, SkeletonInfoCard, SkeletonPostRow, SkeletonForecastRow } from '../../src/components/ui/Skeleton';
-import AnimatedEntrance from '../../src/components/ui/AnimatedEntrance';
-import PressableScale from '../../src/components/ui/PressableScale';
-import { View, Text, TouchableOpacity, ScrollView, RefreshControl, Alert, Linking, StyleSheet, ActivityIndicator } from 'react-native';
+// ─────────────────────────────────────────────────────────────────────────────
+// FILE: app/(tabs)/index.tsx
+// HeatGuard · Home
+//  - Compact color-coded temperature chip (taps through to the forecast)
+//  - One-line heat summary + personal risk
+//  - "Needs your attention" card (one item at a time, most urgent first)
+//  - Quick tiles: Hydration (+1 cup) and Vehicle check (only if kids/pets ride
+//    along; otherwise the offline Emergency card)
+//  - Plan + a short list of tools
+// Skins: High Sun (light) / Night Shift (dark). SOS lives in the tab bar.
+// ─────────────────────────────────────────────────────────────────────────────
+
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { View, Text, ScrollView, RefreshControl, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
-import { AlertCircle, Thermometer, RefreshCw, MapPin, User, TrendingUp, ShieldAlert, Brain, ChevronRight, Zap, BarChart2 } from 'lucide-react-native';
-import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter, useFocusEffect } from 'expo-router';
-import EmergencySOSModal from '../../src/components/emergency/EmergencySOSModal';
-import HeatGuardMark from '../../src/components/brand/HeatGuardMark';
-import { getNotificationPrefs } from '../../src/features/settings/appPrefs';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import {
+  Droplet, Car, Plus, Bell, ChevronRight, Settings, CalendarDays, LifeBuoy,
+  Newspaper, Snowflake, Activity, UserRound,
+} from 'lucide-react-native';
+import haptics from '../../src/utils/haptics';
+import { useSettings } from '../../src/context/SettingsContext';
 import { useWeather } from '../../src/services/weather/useWeather';
-import { refreshWeather, fToC, getTodayHighF, snapshotAgeMinutes, getUpcomingDateKeys } from '../../src/services/weather/weatherStore';
-import { scheduleHeatAlert, scheduleHotDayVehicleReminders, registerForPushNotifications } from '../../src/services/notifications/push';
-import { getHeatProfile, getRiskMultiplier, HeatProfile } from '../../src/features/profile/storage/profileStorage';
-import ExposureSessionCard from '../../src/components/exposure/ExposureSessionCard';
+import {
+  refreshWeather, fToC, getTodayHighF, snapshotAgeMinutes, getUpcomingDateKeys,
+} from '../../src/services/weather/weatherStore';
+import {
+  scheduleHeatAlert, scheduleHotDayVehicleReminders, cancelVehicleReminders, registerForPushNotifications,
+} from '../../src/services/notifications/push';
+import { getNotificationPrefs } from '../../src/features/settings/appPrefs';
+import {
+  getHeatProfile, getRiskMultiplier, hasVehicleDependents, type HeatProfile,
+} from '../../src/features/profile/storage/profileStorage';
 import { PassiveTracker } from '../../src/features/exposure/passiveTracker';
 import MedicationWarningCard from '../../src/components/medications/MedicationWarningCard';
-import CooldownCard from '../../src/components/cooldown/CooldownCard';
-import PreparednessCard from '../../src/components/preparedness/PreparednessCard';
-import { DailyBriefCard } from '../../src/components/features/DailyBriefCard';
-import { HydrationCard } from '../../src/components/features/HydrationCard';
-import { AcclimationCard, VehicleAlertCard } from '../../src/components/features/Phase6Cards';
-import { getCachedBrief, generateDailyBrief, cacheBrief, type DailyBrief } from '../../src/features/brief/briefEngine';
-import { calculateHydrationTarget, computeHydrationSummary, mlToOz, type HydrationSummary } from '../../src/features/hydration/hydrationEngine';
-import { getHydrationLogs } from '../../src/features/hydration/hydrationStorage';
+import {
+  calculateHydrationTarget, computeHydrationSummary, mlToOz, type HydrationSummary,
+} from '../../src/features/hydration/hydrationEngine';
+import { addHydrationLog, getHydrationLogs } from '../../src/features/hydration/hydrationStorage';
+import { getCachedBrief, generateDailyBrief, cacheBrief } from '../../src/features/brief/briefEngine';
 import { getAcclimationScore } from '../../src/features/acclimation/acclimationEngine';
-import { getAcclimationState as loadAcclimationState, type AcclimationState } from '../../src/features/acclimation/acclimationStorage';
-import { getActiveVehicleSession, type VehicleSession } from '../../src/features/vehicle/vehicleAlertEngine';
+import { getAcclimationState } from '../../src/features/acclimation/acclimationStorage';
+import {
+  getActiveVehicleSession, dismissVehicleSession, type VehicleSession,
+} from '../../src/features/vehicle/vehicleAlertEngine';
+import { getContacts } from '../../src/features/emergency/storage/contactStorage';
 
+// ─── Skins ────────────────────────────────────────────────────────────────────
 
-const COLORS = {
-  glacier: '#8ECAE6',
-  desert: '#F4A261',
-  ember: '#E76F51',
-  lava: '#E63946',
-  ocean: '#1D3557',
-  safe: '#2D9B6F',
+const SKIN = {
+  light: {
+    bg: '#F4F4F0',
+    card: '#FFFFFF',
+    border: '#0A0A0A',
+    divider: '#E2E2DC',
+    text: '#0A0A0A',
+    muted: '#3F3F3A',
+    accent: '#0B4FD6',
+    onAccent: '#FFFFFF',
+    vehicle: '#C2410C',
+    attentionBg: '#FFF4CC',
+    attentionBorder: '#0A0A0A',
+    attentionLabel: '#5C4300',
+    urgentBg: '#FDE2E2',
+    urgentLabel: '#8A1414',
+    btnDark: '#0A0A0A',
+    onBtnDark: '#FFFFFF',
+    track: '#E2E2DC',
+    pressed: '#ECECE6',
+  },
+  dark: {
+    bg: '#0B1220',
+    card: '#131C2E',
+    border: '#24314F',
+    divider: '#24314F',
+    text: '#F1F5F9',
+    muted: '#A3B1C9',
+    accent: '#38BDF8',
+    onAccent: '#04121F',
+    vehicle: '#FB923C',
+    attentionBg: '#1A2540',
+    attentionBorder: '#2D3B5E',
+    attentionLabel: '#FBBF24',
+    urgentBg: '#2A1520',
+    urgentLabel: '#FCA5A5',
+    btnDark: '#38BDF8',
+    onBtnDark: '#04121F',
+    track: '#24314F',
+    pressed: '#1A2540',
+  },
 };
 
-// ─── Personalized risk helpers ────────────────────────────────────────────────
+type Skin = typeof SKIN.light;
 
-function getPersonalRiskLevel(temp: number, multiplier: number): 'safe' | 'caution' | 'high' | 'critical' {
-  const adjusted = temp * multiplier;
-  if (adjusted >= 52 || temp >= 40) return 'critical';
-  if (adjusted >= 42 || temp >= 35) return 'high';
-  if (adjusted >= 34 || temp >= 30) return 'caution';
+// ─── Heat levels (from feels-like °C) ─────────────────────────────────────────
+
+type Level = 'safe' | 'caution' | 'high' | 'extreme' | 'crisis';
+
+function levelFromFeelsC(c: number): Level {
+  if (c >= 46) return 'crisis';
+  if (c >= 40) return 'extreme';
+  if (c >= 35) return 'high';
+  if (c >= 30) return 'caution';
   return 'safe';
 }
 
-function getPersonalAdvice(temp: number, profile: HeatProfile, multiplier: number): string {
-  const level = getPersonalRiskLevel(temp, multiplier);
-  const conditions: string[] = [];
-  if (profile.isElderly) conditions.push('your age');
-  if (profile.hasDiabetes) conditions.push('diabetes');
-  if (profile.hasHeartDisease) conditions.push('heart condition');
-  if (profile.hasRespiratoryIssues) conditions.push('respiratory issues');
-  if (profile.takesMedications) conditions.push('medications');
+const LEVEL_LABEL: Record<Level, string> = {
+  safe: 'Safe',
+  caution: 'Caution',
+  high: 'High Alert',
+  extreme: 'Extreme',
+  crisis: 'Crisis',
+};
 
-  const conditionStr = conditions.length > 0
-    ? ` Given ${conditions.join(', ')}, your risk is elevated.`
-    : '';
+const LEVEL_SUMMARY: Record<Level, string> = {
+  safe: 'Comfortable right now. Stay aware as the day warms up.',
+  caution: 'Hot out. Take shade breaks and drink water often.',
+  high: 'Dangerous heat. Limit time outside and avoid hard work.',
+  extreme: 'Extreme heat. Stay indoors in the afternoon if you can.',
+  crisis: 'Life-threatening heat. Stay somewhere cool.',
+};
 
-  if (level === 'critical') return `Extreme danger for you personally.${conditionStr} Seek cool shelter immediately and avoid all outdoor activity.`;
-  if (level === 'high') return `High personal risk at ${temp}°C.${conditionStr} Stay indoors, hydrate every 15–20 minutes, and avoid exertion.`;
-  if (level === 'caution') return `Moderate risk for you.${conditionStr} Take breaks in shade, drink water frequently, and monitor how you feel.`;
-  return `Conditions are within safe range for you.${conditionStr} Stay aware and keep hydrated.`;
-}
-
-function getRiskLabel(level: 'safe' | 'caution' | 'high' | 'critical'): string {
-  if (level === 'critical') return 'CRITICAL FOR YOU';
-  if (level === 'high') return 'HIGH PERSONAL RISK';
-  if (level === 'caution') return 'MONITOR CLOSELY';
-  return 'SAFE FOR YOU';
-}
-
-function getRiskLevelColor(level: 'safe' | 'caution' | 'high' | 'critical'): string {
-  if (level === 'critical') return COLORS.lava;
-  if (level === 'high') return COLORS.ember;
-  if (level === 'caution') return COLORS.desert;
-  return COLORS.safe;
-}
-
-// ─── Predictive Wellness Card ──────────────────────────────────────────────────
-
-function PredictiveWellnessCard({ temperature, profile }: { temperature: number; profile: HeatProfile }) {
-  const router = useRouter();
-  const { formatTemp } = useSettings();
-  const multiplier = getRiskMultiplier(profile);
-  const level = getPersonalRiskLevel(temperature, multiplier);
-  const advice = getPersonalAdvice(temperature, profile, multiplier);
-  const label = getRiskLabel(level);
-  const color = getRiskLevelColor(level);
-
-  const riskFactors: string[] = [];
-  if (profile.isElderly) riskFactors.push('Age 65+');
-  if (profile.hasDiabetes) riskFactors.push('Diabetes');
-  if (profile.hasHeartDisease) riskFactors.push('Heart Disease');
-  if (profile.hasRespiratoryIssues) riskFactors.push('Respiratory');
-  if (profile.takesMedications) riskFactors.push('Medications');
-  if (profile.activityLevel === 'high') riskFactors.push('High Activity');
-
-  const multiplierDisplay = Math.round((multiplier - 1) * 100);
-
-  if (!profile.profileComplete) {
-    return (
-      <TouchableOpacity style={styles.wellnessCard} onPress={() => router.push('/profile/heat-profile')} activeOpacity={0.85}>
-        <View style={styles.wellnessHeader}>
-          <TrendingUp size={20} color={COLORS.ocean} />
-          <Text style={styles.wellnessTitle}>Predictive Wellness</Text>
-        </View>
-        <View style={styles.wellnessSetupRow}>
-          <ShieldAlert size={28} color={COLORS.desert} />
-          <View style={styles.wellnessSetupText}>
-            <Text style={styles.wellnessSetupHeadline}>Set up your heat profile</Text>
-            <Text style={styles.wellnessSetupSub}>Get personalized risk alerts based on your age, health, and activity level.</Text>
-          </View>
-        </View>
-        <View style={styles.wellnessSetupBtn}>
-          <Text style={styles.wellnessSetupBtnText}>Set Up Profile →</Text>
-        </View>
-      </TouchableOpacity>
-    );
+function chipColors(level: Level, isDark: boolean) {
+  if (isDark) {
+    const fg = { safe: '#4ADE80', caution: '#FACC15', high: '#FB923C', extreme: '#F87171', crisis: '#E879F9' }[level];
+    return { bg: '#131C2E', fg, border: fg };
   }
-
-  return (
-    <View style={[styles.wellnessCard, { borderLeftColor: color, borderLeftWidth: 4 }]}>
-      <View style={styles.wellnessHeader}>
-        <TrendingUp size={20} color={COLORS.ocean} />
-        <Text style={styles.wellnessTitle}>Your Personal Risk</Text>
-        <View style={[styles.wellnessLevelBadge, { backgroundColor: color }]}>
-          <Text style={styles.wellnessLevelText}>{label}</Text>
-        </View>
-      </View>
-
-      <View style={styles.wellnessProfileRow}>
-        <View style={styles.wellnessAvatar}>
-          <User size={16} color="white" />
-        </View>
-        <Text style={styles.wellnessProfileName}>{profile.name}, {profile.age}</Text>
-        {multiplierDisplay > 0 && (
-          <View style={styles.multiplierBadge}>
-            <Text style={styles.multiplierText}>+{multiplierDisplay}% risk</Text>
-          </View>
-        )}
-      </View>
-
-      <Text style={styles.wellnessAdvice}>{advice}</Text>
-
-      {riskFactors.length > 0 && (
-        <View style={styles.factorsRow}>
-          {riskFactors.map(f => (
-            <View key={f} style={[styles.factorChip, { borderColor: color }]}>
-              <Text style={[styles.factorText, { color }]}>{f}</Text>
-            </View>
-          ))}
-        </View>
-      )}
-
-      <View style={styles.thresholdRow}>
-        <Thermometer size={14} color={COLORS.ocean} />
-        <Text style={styles.thresholdText}>
-          Your alert threshold: {profile.alertThreshold}°C
-          {temperature >= profile.alertThreshold ? ' — ⚠️ Exceeded!' : ` — ${profile.alertThreshold - temperature}°C remaining`}
-        </Text>
-      </View>
-    </View>
-  );
+  const map: Record<Level, { bg: string; fg: string }> = {
+    safe: { bg: '#15803D', fg: '#FFFFFF' },
+    caution: { bg: '#FACC15', fg: '#0A0A0A' },
+    high: { bg: '#EA580C', fg: '#0A0A0A' },
+    extreme: { bg: '#B91C1C', fg: '#FFFFFF' },
+    crisis: { bg: '#6B21A8', fg: '#FFFFFF' },
+  };
+  return { ...map[level], border: map[level].bg };
 }
 
-// ─── Intelligence Hub Card ─────────────────────────────────────────────────────
+// ─── Personal risk ────────────────────────────────────────────────────────────
 
-function IntelligenceHubCard({ temperature }: { temperature: number }) {
-  const router = useRouter();
-  const { formatTemp } = useSettings();
+type Personal = 'low' | 'moderate' | 'high' | 'veryHigh';
 
-  const tomorrowLevel = temperature >= 40 ? 'Crisis' : temperature >= 35 ? 'Extreme' : temperature >= 30 ? 'High Alert' : 'Caution';
-  const tomorrowColor = temperature >= 40 ? '#7C2D12' : temperature >= 35 ? '#DC2626' : temperature >= 30 ? '#EA580C' : '#D97706';
-  const safeWindow = temperature >= 38 ? '6 – 9 AM' : temperature >= 32 ? '6 – 10 AM' : 'All morning';
-
-  return (
-    <View style={styles.hubCard}>
-      <View style={styles.hubHeader}>
-        <View style={styles.hubIconWrap}>
-          <Brain size={18} color="#FFFFFF" />
-        </View>
-        <Text style={styles.hubTitle}>Intelligence</Text>
-        <View style={styles.hubBadge}>
-          <Text style={styles.hubBadgeText}>Personalised</Text>
-        </View>
-      </View>
-
-      <View style={styles.hubMetrics}>
-        <View style={styles.hubMetric}>
-          <Text style={styles.hubMetricLabel}>Tomorrow's Peak</Text>
-          <View style={[styles.hubLevelPill, { backgroundColor: tomorrowColor + '22', borderColor: tomorrowColor + '55' }]}>
-            <View style={[styles.hubLevelDot, { backgroundColor: tomorrowColor }]} />
-            <Text style={[styles.hubLevelText, { color: tomorrowColor }]}>{tomorrowLevel}</Text>
-          </View>
-        </View>
-        <View style={styles.hubDivider} />
-        <View style={styles.hubMetric}>
-          <Text style={styles.hubMetricLabel}>Best Window</Text>
-          <Text style={styles.hubMetricValue}>{safeWindow}</Text>
-        </View>
-        <View style={styles.hubDivider} />
-        <View style={styles.hubMetric}>
-          <Text style={styles.hubMetricLabel}>Personalised</Text>
-          <Text style={[styles.hubMetricValue, { color: '#2D9B6F' }]}>Active</Text>
-        </View>
-      </View>
-
-      <View style={styles.hubButtonRow}>
-        <TouchableOpacity
-          style={styles.hubButton}
-          onPress={() => router.push('/intelligence/forecast')}
-          activeOpacity={0.8}
-          accessibilityRole="button"
-          accessibilityLabel="Open 5-day heat forecast"
-        >
-          <Brain size={14} color="#FFFFFF" />
-          <Text style={styles.hubButtonText}>5-Day Forecast</Text>
-          <ChevronRight size={13} color="rgba(255,255,255,0.5)" />
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.hubButton, styles.hubButtonAlt]}
-          onPress={() => router.push('/intelligence/activity-planner')}
-          activeOpacity={0.8}
-          accessibilityRole="button"
-          accessibilityLabel="Open activity safety planner"
-        >
-          <Zap size={14} color="#FFFFFF" />
-          <Text style={styles.hubButtonText}>Activity Planner</Text>
-          <ChevronRight size={13} color="rgba(255,255,255,0.5)" />
-        </TouchableOpacity>
-      </View>
-
-      <TouchableOpacity
-        style={[styles.hubButton, styles.hubButtonExposure]}
-        onPress={() => router.push('/intelligence/exposure-history')}
-        activeOpacity={0.8}
-        accessibilityRole="button"
-        accessibilityLabel="Open personal exposure history"
-      >
-        <BarChart2 size={14} color="#FFFFFF" />
-        <Text style={styles.hubButtonText}>Exposure History</Text>
-        <Text style={styles.hubButtonMeta}>14-day analytics</Text>
-        <ChevronRight size={13} color="rgba(255,255,255,0.5)" />
-      </TouchableOpacity>
-    </View>
-  );
+function personalRisk(tempC: number, multiplier: number): Personal {
+  const adjusted = tempC * multiplier;
+  if (adjusted >= 52 || tempC >= 40) return 'veryHigh';
+  if (adjusted >= 42 || tempC >= 35) return 'high';
+  if (adjusted >= 34 || tempC >= 30) return 'moderate';
+  return 'low';
 }
 
-// ─── Main Screen ───────────────────────────────────────────────────────────────
+const PERSONAL_LABEL: Record<Personal, string> = {
+  low: 'Low',
+  moderate: 'Moderate',
+  high: 'High',
+  veryHigh: 'Very high',
+};
+
+function riskReasons(p: HeatProfile): string {
+  const r: string[] = [];
+  if (p.isElderly) r.push('your age');
+  if (p.hasHeartDisease) r.push('your heart condition');
+  if (p.hasDiabetes) r.push('diabetes');
+  if (p.hasRespiratoryIssues) r.push('breathing issues');
+  if (p.takesMedications) r.push('your medications');
+  if (r.length === 0) return '';
+  if (r.length === 1) return `Raised by ${r[0]}.`;
+  return `Raised by ${r.slice(0, -1).join(', ')} and ${r[r.length - 1]}.`;
+}
+
+function greeting(): string {
+  const h = new Date().getHours();
+  if (h < 12) return 'Good morning';
+  if (h < 18) return 'Good afternoon';
+  return 'Good evening';
+}
+
+const CUP_ML = 240;
+
+// ─── Attention item ───────────────────────────────────────────────────────────
+
+interface AttentionItem {
+  urgent: boolean;
+  title: string;
+  body: string;
+  primary: { label: string; onPress: () => void };
+  secondary?: { label: string; onPress: () => void };
+}
+
+// ─── Screen ───────────────────────────────────────────────────────────────────
 
 export default function HomeScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { formatTemp } = useSettings();
+  const { formatTemp, isDark } = useSettings();
+  const c: Skin = isDark ? SKIN.dark : SKIN.light;
+  const borderWidth = isDark ? 1 : 2;
+
   const [refreshing, setRefreshing] = useState(false);
-  const [showEmergencyModal, setShowEmergencyModal] = useState(false);
-  const [heatProfile, setHeatProfile] = useState<HeatProfile>(getHeatProfile());
+  const [profile, setProfile] = useState<HeatProfile>(getHeatProfile());
+  const [hydration, setHydration] = useState<HydrationSummary | null>(null);
+  const [vehicleSession, setVehicleSession] = useState<VehicleSession | null>(null);
+  const [contactCount, setContactCount] = useState<number>(0);
+  const [, setTick] = useState(0);
   const lastAlertTemp = useRef<number>(0);
 
-  // ── Phase 6 state ──────────────────────────────────────────────────────────
-  const [dailyBrief, setDailyBrief] = useState<DailyBrief | null>(null);
-  const [hydrationSummary, setHydrationSummary] = useState<HydrationSummary | null>(null);
-  const [acclimState, setAcclimState] = useState<AcclimationState>(loadAcclimationState());
-  const [vehicleSession, setVehicleSession] = useState<VehicleSession | null>(null);
-
-  // ── Live weather (Open-Meteo, shared store) ────────────────────────────────
   const { snapshot, loading: weatherLoading, error: weatherError } = useWeather();
   const todayHighF = getTodayHighF(snapshot);
+  const currentTempF = snapshot ? Math.round(snapshot.current.tempF) : null;
 
+  // ── Hydration ──────────────────────────────────────────────────────────────
+  const recomputeHydration = useCallback(() => {
+    const tempForTarget = todayHighF ?? currentTempF;
+    if (tempForTarget === null) return;
+    const target = calculateHydrationTarget(getHeatProfile(), tempForTarget);
+    setHydration(computeHydrationSummary(target, getHydrationLogs()));
+  }, [todayHighF, currentTempF]);
+
+  const addCup = () => {
+    addHydrationLog(CUP_ML, 'cup');
+    haptics.selection();
+    recomputeHydration();
+  };
+
+  // ── Refresh local state whenever Home is shown ─────────────────────────────
   useFocusEffect(useCallback(() => {
-    const profile = getHeatProfile();
-    setHeatProfile(profile);
-    setAcclimState(loadAcclimationState());
+    const p = getHeatProfile();
+    setProfile(p);
     setVehicleSession(getActiveVehicleSession());
+    try { setContactCount(getContacts().length); } catch { setContactCount(0); }
+    recomputeHydration();
 
-    // Everything below needs real weather — never build it from made-up numbers
-    if (todayHighF === null) return;
-
-    // Daily brief — use cache if today's, else regenerate from today's real high
-    const cachedBrief = getCachedBrief();
-    if (cachedBrief) {
-      setDailyBrief(cachedBrief);
-    } else if (profile?.profileComplete) {
-      const acclimRaw = loadAcclimationState();
-      const hydTarget = calculateHydrationTarget(profile, todayHighF);
-      const hydSummary = computeHydrationSummary(hydTarget, getHydrationLogs());
-      const brief = generateDailyBrief({
-        profile,
-        forecastHighF: todayHighF,
-        hydrationTargetOz: mlToOz(hydTarget.dailyTargetMl),
-        hydrationPercentComplete: hydSummary.percentComplete,
-        acclimationDay: acclimRaw.isActive ? acclimRaw.currentDay : null,
-        acclimationScore: getAcclimationScore(acclimRaw.completedDays.length),
-        medicationWarnings: profile.takesMedications ? 1 : 0,
-      });
-      cacheBrief(brief);
-      setDailyBrief(brief);
+    // Keep the Daily Brief cache warm for the Brief screen (real weather only)
+    if (todayHighF !== null && p.profileComplete && !getCachedBrief()) {
+      try {
+        const acclim = getAcclimationState();
+        const target = calculateHydrationTarget(p, todayHighF);
+        const summary = computeHydrationSummary(target, getHydrationLogs());
+        cacheBrief(generateDailyBrief({
+          profile: p,
+          forecastHighF: todayHighF,
+          hydrationTargetOz: mlToOz(target.dailyTargetMl),
+          hydrationPercentComplete: summary.percentComplete,
+          acclimationDay: acclim.isActive ? acclim.currentDay : null,
+          acclimationScore: getAcclimationScore(acclim.completedDays.length),
+          medicationWarnings: p.takesMedications ? 1 : 0,
+        }));
+      } catch {}
     }
+  }, [todayHighF, recomputeHydration]));
 
-    // Hydration summary — daily target based on today's real high
-    const hydTarget = calculateHydrationTarget(profile, todayHighF);
-    setHydrationSummary(computeHydrationSummary(hydTarget, getHydrationLogs()));
-  }, [todayHighF]));
+  // Tick the vehicle timer display while a session is running
+  useEffect(() => {
+    if (!vehicleSession) return;
+    const id = setInterval(() => setTick(t => t + 1), 30_000);
+    return () => clearInterval(id);
+  }, [vehicleSession]);
 
   // React to each new weather reading: exposure tracker + heat alerts
   useEffect(() => {
@@ -320,71 +263,40 @@ export default function HomeScreen() {
     if (PassiveTracker.getState().isTracking) {
       Promise.resolve(PassiveTracker.updateTemperature(tempF)).catch(() => {});
     }
-    const threshold = heatProfile.alertThreshold ?? 35;
+    const threshold = profile.alertThreshold ?? 35;
     const rounded = Math.round(feelsC);
     if (getNotificationPrefs().heatAlerts && rounded >= threshold && rounded !== lastAlertTemp.current) {
       const riskLevel = rounded >= 40 ? 'critical' : rounded >= 35 ? 'high' : 'caution';
       Promise.resolve(scheduleHeatAlert(rounded, riskLevel)).catch(() => {});
       lastAlertTemp.current = rounded;
     }
-  }, [snapshot?.fetchedAt, heatProfile.alertThreshold]);
+  }, [snapshot?.fetchedAt, profile.alertThreshold]);
 
   // Ask for notification permission once (heat alerts + hot-day reminders)
   useEffect(() => {
     registerForPushNotifications().catch(() => {});
   }, []);
 
-  // Re-plan "look before you lock" reminders whenever the forecast updates
+  // "Look before you lock" reminders: only for people with kids or pets in the
+  // car (or who haven't answered yet). Re-planned when the forecast updates.
   useEffect(() => {
     if (!snapshot) return;
+    if (profile.householdAnswered && !hasVehicleDependents(profile)) {
+      cancelVehicleReminders();
+      return;
+    }
     const days = getUpcomingDateKeys(snapshot, 5)
       .map(dateKey => snapshot.daily.find(d => d.dateKey === dateKey))
       .filter((d): d is NonNullable<typeof d> => !!d)
       .map(d => ({ dateKey: d.dateKey, highF: d.highF }));
     scheduleHotDayVehicleReminders(days);
-  }, [snapshot?.fetchedAt]);
+  }, [snapshot?.fetchedAt, profile.householdAnswered, profile.drivesWithKids, profile.drivesWithPets]);
 
-  // Refresh every 15 minutes while Home is mounted
+  // Refresh weather every 15 minutes while Home is mounted
   useEffect(() => {
     const id = setInterval(() => { refreshWeather(true); }, 15 * 60 * 1000);
     return () => clearInterval(id);
   }, []);
-
-  // Values below are only used once a snapshot exists (see early returns)
-  const temperature = snapshot ? Math.round(fToC(snapshot.current.tempF)) : 0;   // °C
-  const heatIndex = snapshot ? Math.round(fToC(snapshot.current.feelsLikeF)) : 0; // °C
-  const locationName = snapshot?.locationName ?? 'Your Location';
-  const temperatureF = snapshot ? Math.round(snapshot.current.tempF) : 0;
-  const weatherDescription = snapshot?.current.description;
-
-  const updatedLabel = (() => {
-    if (!snapshot) return '';
-    const mins = snapshotAgeMinutes(snapshot);
-    const when = mins < 2 ? 'just now' : mins < 60 ? `${mins} min ago` : mins < 1440 ? `${Math.round(mins / 60)} hr ago` : `${Math.round(mins / 1440)} days ago`;
-    return `Updated ${when}${weatherError ? ' · offline' : ''}`;
-  })();
-
-  // Risk level follows the feels-like temperature (what the body experiences)
-  const getRiskColor = () => {
-    if (heatIndex >= 40) return COLORS.lava;
-    if (heatIndex >= 35) return COLORS.ember;
-    if (heatIndex >= 30) return COLORS.desert;
-    return COLORS.glacier;
-  };
-
-  const getRiskText = () => {
-    if (heatIndex >= 40) return 'CRITICAL';
-    if (heatIndex >= 35) return 'HIGH RISK';
-    if (heatIndex >= 30) return 'CAUTION';
-    return 'NORMAL';
-  };
-
-  const getAdviceText = () => {
-    if (heatIndex >= 40) return 'EXTREME DANGER: Heat stroke highly likely. Seek immediate shelter and hydration.';
-    if (heatIndex >= 35) return 'HIGH RISK: Heat exhaustion likely. Limit outdoor activity and stay hydrated.';
-    if (heatIndex >= 30) return 'CAUTION: Possible fatigue with prolonged exposure. Take regular breaks.';
-    return 'SAFE: Current conditions are comfortable. Stay aware of weather changes.';
-  };
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -392,265 +304,412 @@ export default function HomeScreen() {
     setRefreshing(false);
   };
 
-  const handleCallEmergency = () => {
-    Alert.alert('Call 911?', 'This will immediately call emergency services.', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Call Now', style: 'destructive', onPress: () => { setShowEmergencyModal(false); Linking.openURL('tel:911'); } },
-    ]);
-  };
-
-  // No weather has ever loaded yet
+  // ── No weather yet ─────────────────────────────────────────────────────────
   if (!snapshot) {
-    if (!weatherError || weatherLoading) {
-      return (
-        <View style={[styles.container, styles.centered]}>
-          <ActivityIndicator size="large" color={COLORS.ocean} />
-          <Text style={styles.loadingText}>Getting your local conditions...</Text>
-        </View>
-      );
-    }
     return (
-      <View style={[styles.container, styles.centered, { padding: 24 }]}>
-        <Text style={styles.noWeatherTitle}>Weather unavailable</Text>
-        <Text style={styles.noWeatherText}>
-          HeatGuard couldn't load your local conditions. Check your connection and try again.
-          Emergency tools still work.
-        </Text>
-        <TouchableOpacity style={styles.retryBtn} onPress={() => refreshWeather(true)} activeOpacity={0.8}>
-          <Text style={styles.retryBtnText}>Try again</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          onPress={() => router.push('/offline/emergency-card')}
-          style={[styles.offlineCardBtn, { alignSelf: 'stretch' }]}
-          activeOpacity={0.8}
-        >
-          <Text style={styles.offlineCardBtnText}>⚡ Emergency Info Card</Text>
-          <Text style={styles.offlineCardBtnSub}>Works offline · Symptoms · Shelters · Contacts</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          onPress={handleCallEmergency}
-          style={[styles.sosButton, { alignSelf: 'stretch' }]}
-          activeOpacity={0.8}
-        >
-          <Text style={styles.sosButtonText}>🆘 CALL 911</Text>
-          <Text style={styles.sosButtonSubtext}>Tap if you need immediate help</Text>
-        </TouchableOpacity>
+      <View style={[styles.container, styles.centered, { backgroundColor: c.bg, paddingHorizontal: 24 }]}>
+        <StatusBar style={isDark ? 'light' : 'dark'} />
+        {!weatherError || weatherLoading ? (
+          <>
+            <ActivityIndicator size="large" color={c.accent} />
+            <Text style={[styles.loadingText, { color: c.muted }]}>Getting your local conditions…</Text>
+          </>
+        ) : (
+          <>
+            <Text style={[styles.noWeatherTitle, { color: c.text }]}>Weather unavailable</Text>
+            <Text style={[styles.noWeatherText, { color: c.muted }]}>
+              HeatGuard couldn't load your local conditions. Check your connection and try again. SOS and the emergency card still work.
+            </Text>
+            <Pressable
+              onPress={() => refreshWeather(true)}
+              accessibilityRole="button"
+              style={[styles.solidBtn, { backgroundColor: c.btnDark, alignSelf: 'stretch' }]}
+            >
+              <Text style={[styles.solidBtnText, { color: c.onBtnDark }]}>Try again</Text>
+            </Pressable>
+            <Pressable
+              onPress={() => router.push('/offline/emergency-card')}
+              accessibilityRole="button"
+              style={[styles.outlineBtn, { borderColor: c.border, borderWidth, alignSelf: 'stretch', marginTop: 10 }]}
+            >
+              <Text style={[styles.outlineBtnText, { color: c.text }]}>Open emergency info card</Text>
+            </Pressable>
+          </>
+        )}
       </View>
     );
   }
 
+  // ── Derived values ─────────────────────────────────────────────────────────
+  const tempC = Math.round(fToC(snapshot.current.tempF));
+  const feelsC = Math.round(fToC(snapshot.current.feelsLikeF));
+  const level = levelFromFeelsC(feelsC);
+  const chip = chipColors(level, isDark);
+  const locationName = snapshot.locationName ?? 'Your location';
+  const ageMins = snapshotAgeMinutes(snapshot);
+  const updatedLabel =
+    (ageMins < 2 ? 'Updated just now' : ageMins < 60 ? `Updated ${ageMins} min ago` : `Updated ${Math.round(ageMins / 60)} hr ago`) +
+    (weatherError ? ' · offline' : '');
+
+  const firstName = profile.name.trim().split(' ')[0];
+  const personal = personalRisk(tempC, getRiskMultiplier(profile));
+  const reasons = riskReasons(profile);
+  const showVehicle = hasVehicleDependents(profile);
+
+  const vehicleMinutes = vehicleSession
+    ? Math.max(0, Math.floor((Date.now() - new Date(vehicleSession.startTime).getTime()) / 60_000))
+    : 0;
+
+  const consumedOz = hydration ? mlToOz(hydration.consumedMl) : 0;
+  const targetOz = hydration ? mlToOz(hydration.target.dailyTargetMl) : 0;
+  const remainingOz = hydration ? mlToOz(hydration.remainingMl) : 0;
+  const hydrationPct = hydration ? hydration.percentComplete : 0;
+
+  // ── One attention item, most urgent first ──────────────────────────────────
+  let attention: AttentionItem | null = null;
+  if (vehicleSession) {
+    attention = {
+      urgent: true,
+      title: `Vehicle timer: ${vehicleMinutes} min`,
+      body: 'Is everyone out of the car?',
+      primary: {
+        label: 'Yes, all clear',
+        onPress: () => { dismissVehicleSession(); setVehicleSession(null); haptics.selection(); },
+      },
+      secondary: { label: 'Open timer', onPress: () => router.push('/vehicle/alert') },
+    };
+  } else if (!profile.householdAnswered) {
+    attention = {
+      urgent: false,
+      title: 'Who are you protecting?',
+      body: 'Answer 4 quick questions so HeatGuard shows the right tools for you.',
+      primary: { label: 'Answer now', onPress: () => router.push('/profile/household') },
+    };
+  } else if (contactCount === 0) {
+    attention = {
+      urgent: false,
+      title: 'Add an emergency contact',
+      body: profile.livesAlone
+        ? 'You live alone. Make sure SOS can reach someone who can check on you.'
+        : 'So SOS can text someone your location if you need help.',
+      primary: { label: 'Add a contact', onPress: () => router.push('/emergency/contacts') },
+    };
+  } else if (hydration && (hydration.status === 'behind' || hydration.status === 'critical')) {
+    attention = {
+      urgent: hydration.status === 'critical',
+      title: 'Time for water',
+      body: `${remainingOz} oz to go today.`,
+      primary: { label: 'I drank a cup', onPress: addCup },
+    };
+  }
+
+  // ── Render ─────────────────────────────────────────────────────────────────
   return (
-    <View style={styles.container}>
-      <StatusBar style="dark" />
+    <View style={[styles.container, { backgroundColor: c.bg }]}>
+      <StatusBar style={isDark ? 'light' : 'dark'} />
       <ScrollView
-        style={styles.scrollView}
         contentContainerStyle={[styles.content, { paddingTop: insets.top + 12 }]}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={c.muted} />}
       >
-        {/* ── Header ──────────────────────────────────────────────────────── */}
+        {/* ── Header ───────────────────────────────────────────────────────── */}
         <View style={styles.header}>
-          <View style={styles.headerTop}>
-            <View style={styles.brand} accessibilityRole="header">
-              <HeatGuardMark size={30} />
-              <Text style={styles.title}>HeatGuard</Text>
-            </View>
-            <PressableScale onPress={() => router.push("/settings")} accessibilityLabel="Settings" accessibilityRole="button" style={styles.headerAction}>
-              <Ionicons name="settings-outline" size={22} color={COLORS.ocean} />
-            </PressableScale>
+          <View style={styles.headerText}>
+            <Text style={[styles.location, { color: c.muted }]} numberOfLines={1}>{locationName}</Text>
+            <Text style={[styles.greeting, { color: c.text }]} accessibilityRole="header" numberOfLines={1}>
+              {firstName ? `${greeting()}, ${firstName}` : greeting()}
+            </Text>
           </View>
-          <View style={styles.locationRow}>
-            <MapPin size={16} color="#6B7280" />
-            <Text style={styles.subtitle} numberOfLines={1}>{locationName}</Text>
-          </View>
-          <Text style={styles.updatedText}>{updatedLabel}</Text>
+          <Pressable
+            onPress={() => router.push('/settings')}
+            accessibilityRole="button"
+            accessibilityLabel="Settings"
+            style={styles.iconBtn}
+            hitSlop={6}
+          >
+            <Settings size={22} color={c.muted} />
+          </Pressable>
+          <Pressable
+            onPress={() => router.push('/intelligence/forecast')}
+            accessibilityRole="button"
+            accessibilityLabel={`${formatTemp(tempC)}, feels like ${formatTemp(feelsC)}, ${LEVEL_LABEL[level]}. Open forecast`}
+            style={({ pressed }) => [
+              styles.chip,
+              { backgroundColor: chip.bg, borderColor: chip.border, opacity: pressed ? 0.85 : 1 },
+            ]}
+          >
+            <Text style={[styles.chipTemp, { color: chip.fg }]}>{formatTemp(tempC, false)}</Text>
+            <Text style={[styles.chipLabel, { color: chip.fg }]}>{LEVEL_LABEL[level]}</Text>
+          </Pressable>
         </View>
 
-        {/* ── Temperature Card ─────────────────────────────────────────────── */}
-        <View style={[styles.tempCard, { backgroundColor: getRiskColor() }]}>
-          <Thermometer size={48} color={COLORS.ocean} strokeWidth={2} />
-          <Text style={styles.tempLarge}>{formatTemp(temperature, false)}</Text>
-          <Text style={styles.tempSubtext}>Feels like {formatTemp(heatIndex)}</Text>
-          {weatherDescription && (
-            <Text style={styles.weatherDesc}>{weatherDescription}</Text>
+        {/* ── Summary ──────────────────────────────────────────────────────── */}
+        <View
+          style={[
+            styles.summary,
+            isDark
+              ? { backgroundColor: c.card, padding: 14, borderRadius: 14 }
+              : { borderTopWidth: 3, borderTopColor: c.text, paddingTop: 10 },
+          ]}
+        >
+          <Text style={[styles.summaryText, { color: c.text }]}>{LEVEL_SUMMARY[level]}</Text>
+          <Text style={[styles.summaryMeta, { color: c.muted }]}>
+            Feels like {formatTemp(feelsC)}{todayHighF !== null ? ` · High ${formatTemp(Math.round(fToC(todayHighF)))}` : ''} · {updatedLabel}
+          </Text>
+          {profile.profileComplete ? (
+            <Text style={[styles.personal, { color: c.text }]}>
+              Your risk today: <Text style={styles.personalStrong}>{PERSONAL_LABEL[personal]}</Text>
+              {reasons ? <Text style={{ color: c.muted }}> · {reasons}</Text> : null}
+            </Text>
+          ) : (
+            <Pressable
+              onPress={() => router.push('/profile/heat-profile')}
+              accessibilityRole="button"
+              style={styles.inlineLink}
+            >
+              <UserRound size={18} color={c.accent} />
+              <Text style={[styles.inlineLinkText, { color: c.accent }]}>Set up your heat profile for your personal risk</Text>
+            </Pressable>
           )}
-          <View style={styles.riskBadge}>
-            <Text style={styles.riskText}>{getRiskText()}</Text>
+        </View>
+
+        {/* ── Needs your attention ─────────────────────────────────────────── */}
+        {attention && (
+          <View
+            style={[
+              styles.attention,
+              {
+                backgroundColor: attention.urgent ? c.urgentBg : c.attentionBg,
+                borderColor: c.attentionBorder,
+                borderWidth,
+              },
+            ]}
+            accessibilityRole="alert"
+          >
+            <View style={styles.attentionLabelRow}>
+              <Bell size={16} color={attention.urgent ? c.urgentLabel : c.attentionLabel} />
+              <Text style={[styles.attentionLabel, { color: attention.urgent ? c.urgentLabel : c.attentionLabel }]}>
+                Needs your attention
+              </Text>
+            </View>
+            <Text style={[styles.attentionTitle, { color: c.text }]}>{attention.title}</Text>
+            <Text style={[styles.attentionBody, { color: c.text }]}>{attention.body}</Text>
+            <View style={styles.attentionActions}>
+              <Pressable
+                onPress={attention.primary.onPress}
+                accessibilityRole="button"
+                style={({ pressed }) => [styles.solidBtn, styles.flex1, { backgroundColor: c.btnDark, opacity: pressed ? 0.85 : 1 }]}
+              >
+                <Text style={[styles.solidBtnText, { color: c.onBtnDark }]}>{attention.primary.label}</Text>
+              </Pressable>
+              {attention.secondary && (
+                <Pressable
+                  onPress={attention.secondary.onPress}
+                  accessibilityRole="button"
+                  style={({ pressed }) => [
+                    styles.outlineBtn,
+                    { borderColor: c.border, borderWidth, backgroundColor: pressed ? c.pressed : c.card },
+                  ]}
+                >
+                  <Text style={[styles.outlineBtnText, { color: c.text }]}>{attention.secondary.label}</Text>
+                </Pressable>
+              )}
+            </View>
           </View>
+        )}
+
+        {/* ── Quick tiles ──────────────────────────────────────────────────── */}
+        <View style={styles.tiles}>
+          <Pressable
+            onPress={() => router.push('/hydration/tracker')}
+            accessibilityRole="button"
+            accessibilityLabel={`Hydration, ${consumedOz} of ${targetOz} ounces. Open tracker`}
+            style={({ pressed }) => [
+              styles.tile,
+              { backgroundColor: pressed ? c.pressed : c.card, borderColor: c.border, borderWidth },
+            ]}
+          >
+            <View style={styles.tileTop}>
+              <Droplet size={26} color={c.accent} />
+              <Pressable
+                onPress={addCup}
+                accessibilityRole="button"
+                accessibilityLabel="Log one cup of water"
+                hitSlop={8}
+                style={({ pressed }) => [styles.plusBtn, { backgroundColor: c.accent, opacity: pressed ? 0.8 : 1 }]}
+              >
+                <Plus size={22} color={c.onAccent} strokeWidth={3} />
+              </Pressable>
+            </View>
+            <Text style={[styles.tileTitle, { color: c.text }]}>Hydration</Text>
+            <Text style={[styles.tileBig, { color: c.text }]}>
+              {consumedOz}
+              <Text style={[styles.tileBigUnit, { color: c.muted }]}> / {targetOz} oz</Text>
+            </Text>
+            <View style={[styles.track, { backgroundColor: c.track }]}>
+              <View style={[styles.trackFill, { width: `${hydrationPct}%`, backgroundColor: c.accent }]} />
+            </View>
+          </Pressable>
+
+          {showVehicle ? (
+            <Pressable
+              onPress={() => router.push('/vehicle/alert')}
+              accessibilityRole="button"
+              accessibilityLabel="Vehicle check. Start a timer when you park"
+              style={({ pressed }) => [
+                styles.tile,
+                { backgroundColor: pressed ? c.pressed : c.card, borderColor: c.border, borderWidth },
+              ]}
+            >
+              <Car size={26} color={c.vehicle} />
+              <Text style={[styles.tileTitle, { color: c.text }]}>Vehicle check</Text>
+              <Text style={[styles.tileSub, { color: c.muted }]}>
+                {vehicleSession
+                  ? `Timer running · ${vehicleMinutes} min`
+                  : `${profile.drivesWithKids && profile.drivesWithPets ? 'Kids & pets' : profile.drivesWithKids ? 'Kids' : 'Pets'} aboard? Start a timer when you park.`}
+              </Text>
+            </Pressable>
+          ) : (
+            <Pressable
+              onPress={() => router.push('/offline/emergency-card')}
+              accessibilityRole="button"
+              accessibilityLabel="Emergency info card. Works offline"
+              style={({ pressed }) => [
+                styles.tile,
+                { backgroundColor: pressed ? c.pressed : c.card, borderColor: c.border, borderWidth },
+              ]}
+            >
+              <LifeBuoy size={26} color={c.vehicle} />
+              <Text style={[styles.tileTitle, { color: c.text }]}>Emergency card</Text>
+              <Text style={[styles.tileSub, { color: c.muted }]}>Symptoms, what to do, and your contacts. Works offline.</Text>
+            </Pressable>
+          )}
         </View>
 
-        {/* ── General Alert ────────────────────────────────────────────────── */}
-        <View style={styles.alertCard}>
-          <View style={styles.alertHeader}>
-            <AlertCircle size={20} color={COLORS.ocean} />
-            <Text style={styles.alertTitle}>Heat Index Alert</Text>
+        {/* ── Medication warnings (only if relevant) ───────────────────────── */}
+        {profile.takesMedications && (
+          <MedicationWarningCard tempC={tempC} takesMedications={profile.takesMedications} />
+        )}
+
+        {/* ── Plan ─────────────────────────────────────────────────────────── */}
+        <Pressable
+          onPress={() => router.push('/plan')}
+          accessibilityRole="button"
+          style={({ pressed }) => [
+            styles.row,
+            { backgroundColor: pressed ? c.pressed : c.card, borderColor: c.border, borderWidth },
+          ]}
+        >
+          <CalendarDays size={24} color={c.text} />
+          <View style={styles.rowText}>
+            <Text style={[styles.rowTitle, { color: c.text }]}>Plan outdoor time</Text>
+            <Text style={[styles.rowSub, { color: c.muted }]}>
+              {profile.worksOutdoors ? 'Safer hours and prep for work or exercise outside' : 'Forecast and safer hours'}
+            </Text>
           </View>
-          <Text style={styles.alertText}>{getAdviceText()}</Text>
-        </View>
+          <ChevronRight size={22} color={c.muted} />
+        </Pressable>
 
-        {/* ── Phase 6: Daily Brief ─────────────────────────────────────────── */}
-        <DailyBriefCard brief={dailyBrief} />
-
-        {/* ── Phase 6: Hydration ───────────────────────────────────────────── */}
-        <View style={styles.phase6Card}>
-          <HydrationCard summary={hydrationSummary} />
-        </View>
-
-        {/* ── Predictive Wellness ──────────────────────────────────────────── */}
-        <PredictiveWellnessCard temperature={temperature} profile={heatProfile} />
-
-        {/* ── Intelligence Hub ─────────────────────────────────────────────── */}
-        <IntelligenceHubCard temperature={temperature} />
-
-        {/* ── Phase 6: Acclimation ─────────────────────────────────────────── */}
-        <View style={styles.phase6Card}>
-          <AcclimationCard state={acclimState} />
-        </View>
-
-        {/* ── Phase 6: Vehicle Alert ───────────────────────────────────────── */}
-        <View style={styles.phase6Card}>
-          <VehicleAlertCard session={vehicleSession} currentTempF={temperatureF} />
-        </View>
-
-        {/* ── Exposure Tracker ─────────────────────────────────────────────── */}
-        <ExposureSessionCard currentTempF={temperatureF} />
-
-        {/* ── Medication Warnings ──────────────────────────────────────────── */}
-        <MedicationWarningCard tempC={temperature} takesMedications={heatProfile.takesMedications} />
-
-        <CooldownCard tempC={temperature} />
-
-        <PreparednessCard />
-
-
-
-        
-
-        {/* ── Emergency Offline Card ───────────────────────────────────────── */}
-        <TouchableOpacity
-          onPress={() => router.push('/offline/emergency-card')}
-          style={styles.offlineCardBtn}
-          activeOpacity={0.8}
-        >
-          <Text style={styles.offlineCardBtnText}>⚡ Emergency Info Card</Text>
-          <Text style={styles.offlineCardBtnSub}>Works offline · Symptoms · Shelters · Contacts</Text>
-        </TouchableOpacity>
-
-        {/* ── Emergency SOS ────────────────────────────────────────────────── */}
-        <TouchableOpacity
-          onPress={() => setShowEmergencyModal(true)}
-          style={styles.sosButton}
-          activeOpacity={0.8}
-        >
-          <Text style={styles.sosButtonText}>🆘 EMERGENCY SOS</Text>
-          <Text style={styles.sosButtonSubtext}>Tap if you need immediate help</Text>
-        </TouchableOpacity>
-
-        <View style={styles.footer}>
-          <RefreshCw size={14} color="#6B7280" />
-          <Text style={styles.footerText}>Auto-refresh every 5 min • Pull to refresh now</Text>
+        {/* ── More tools ───────────────────────────────────────────────────── */}
+        <Text style={[styles.sectionLabel, { color: c.muted }]}>More tools</Text>
+        <View style={[styles.list, { backgroundColor: c.card, borderColor: c.border, borderWidth }]}>
+          {[
+            { label: 'Daily brief', Icon: Newspaper, href: '/brief' },
+            { label: 'Cool-down timer', Icon: Snowflake, href: '/cooldown/timer' },
+            { label: 'Heat acclimation', Icon: Activity, href: '/acclimation' },
+            ...(showVehicle ? [{ label: 'Emergency info card', Icon: LifeBuoy, href: '/offline/emergency-card' }] : []),
+          ].map((item, i, arr) => (
+            <Pressable
+              key={item.href}
+              onPress={() => router.push(item.href as any)}
+              accessibilityRole="button"
+              style={({ pressed }) => [
+                styles.listRow,
+                {
+                  backgroundColor: pressed ? c.pressed : 'transparent',
+                  borderBottomColor: c.divider,
+                  borderBottomWidth: i < arr.length - 1 ? 1 : 0,
+                },
+              ]}
+            >
+              <item.Icon size={22} color={c.text} />
+              <Text style={[styles.listLabel, { color: c.text }]}>{item.label}</Text>
+              <ChevronRight size={20} color={c.muted} />
+            </Pressable>
+          ))}
         </View>
       </ScrollView>
-
-      <EmergencySOSModal
-        visible={showEmergencyModal}
-        onClose={() => setShowEmergencyModal(false)}
-      />
     </View>
   );
 }
 
+// ─── Styles ───────────────────────────────────────────────────────────────────
+
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#fff' },
+  container: { flex: 1 },
   centered: { justifyContent: 'center', alignItems: 'center' },
-  loadingText: { marginTop: 16, fontSize: 16, color: '#6B7280' },
-  scrollView: { flex: 1 },
-  content: { padding: 24 },
-  header: { marginBottom: 28 },
-  headerTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  brand: { flexDirection: 'row', alignItems: 'center', gap: 10, flexShrink: 1 },
-  headerAction: { width: 44, height: 44, alignItems: "center", justifyContent: "center" },
-  title: { fontSize: 30, fontWeight: 'bold', color: COLORS.ocean },
-  locationRow: { flexDirection: 'row', alignItems: 'center', marginTop: 8, paddingRight: 8 },
-  subtitle: { fontSize: 16, color: '#6B7280', marginLeft: 4, flexShrink: 1 },
+  loadingText: { marginTop: 16, fontSize: 16 },
+  noWeatherTitle: { fontSize: 22, fontWeight: '800', marginBottom: 8, textAlign: 'center' },
+  noWeatherText: { fontSize: 16, textAlign: 'center', lineHeight: 23, marginBottom: 20 },
 
-  tempCard: { borderRadius: 24, padding: 32, marginBottom: 24, alignItems: 'center' },
-  updatedText: { fontSize: 12, color: '#6B7280', marginTop: 4 },
-  noWeatherTitle: { fontSize: 22, fontWeight: '700', color: '#1D3557', marginBottom: 8, textAlign: 'center' },
-  noWeatherText: { fontSize: 15, color: '#4B5563', textAlign: 'center', lineHeight: 22, marginBottom: 20 },
-  retryBtn: { backgroundColor: '#1D3557', paddingVertical: 14, paddingHorizontal: 32, borderRadius: 12, marginBottom: 24, minHeight: 48, justifyContent: 'center' },
-  retryBtnText: { color: '#FFFFFF', fontSize: 16, fontWeight: '600' },
-  tempLarge: { fontSize: 72, fontWeight: 'bold', color: COLORS.ocean, marginTop: 16 },
-  tempSubtext: { fontSize: 20, color: COLORS.ocean, opacity: 0.8, marginTop: 8 },
-  weatherDesc: { fontSize: 16, color: COLORS.ocean, opacity: 0.7, marginTop: 4, textTransform: 'capitalize' },
-  riskBadge: { backgroundColor: 'rgba(29, 53, 87, 0.1)', paddingHorizontal: 24, paddingVertical: 12, borderRadius: 20, marginTop: 24 },
-  riskText: { fontSize: 18, fontWeight: '600', color: COLORS.ocean },
+  content: { paddingHorizontal: 20, paddingBottom: 40, gap: 14 },
+  flex1: { flex: 1 },
 
-  alertCard: { backgroundColor: '#F9FAFB', borderRadius: 16, padding: 24, marginBottom: 16 },
-  alertHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
-  alertTitle: { fontSize: 18, fontWeight: '600', color: COLORS.ocean, marginLeft: 8 },
-  alertText: { fontSize: 16, color: '#374151', lineHeight: 24 },
-
-  phase6Card: { marginBottom: 16 },
-
-  wellnessCard: {
-    backgroundColor: '#fff', borderRadius: 16, padding: 20, marginBottom: 16,
-    shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 12, shadowOffset: { width: 0, height: 4 },
-    elevation: 3, borderWidth: 1, borderColor: '#F0F0F0',
+  header: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  headerText: { flex: 1 },
+  location: { fontSize: 14, fontWeight: '700' },
+  greeting: { fontSize: 25, fontWeight: '800', letterSpacing: -0.3 },
+  iconBtn: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+  chip: {
+    minHeight: 56,
+    minWidth: 76,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 14,
+    borderWidth: 1.5,
+    alignItems: 'flex-end',
+    justifyContent: 'center',
   },
-  wellnessHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 14, flexWrap: 'wrap' },
-  wellnessTitle: { fontSize: 16, fontWeight: '700', color: COLORS.ocean, flex: 1 },
-  wellnessLevelBadge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 20 },
-  wellnessLevelText: { color: 'white', fontSize: 11, fontWeight: '700', letterSpacing: 0.5 },
-  wellnessProfileRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 },
-  wellnessAvatar: { width: 28, height: 28, borderRadius: 14, backgroundColor: COLORS.ocean, alignItems: 'center', justifyContent: 'center' },
-  wellnessProfileName: { fontSize: 14, fontWeight: '600', color: COLORS.ocean, flex: 1 },
-  multiplierBadge: { backgroundColor: '#FEF3C7', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10 },
-  multiplierText: { fontSize: 12, fontWeight: '600', color: '#92400E' },
-  wellnessAdvice: { fontSize: 14, color: '#374151', lineHeight: 22, marginBottom: 14 },
-  factorsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 14 },
-  factorChip: { borderWidth: 1.5, borderRadius: 20, paddingHorizontal: 10, paddingVertical: 4 },
-  factorText: { fontSize: 12, fontWeight: '600' },
-  thresholdRow: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingTop: 12, borderTopWidth: 1, borderTopColor: '#F3F4F6' },
-  thresholdText: { fontSize: 13, color: '#6B7280', flex: 1 },
-  wellnessSetupRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 14, marginBottom: 16 },
-  wellnessSetupText: { flex: 1 },
-  wellnessSetupHeadline: { fontSize: 15, fontWeight: '600', color: COLORS.ocean, marginBottom: 4 },
-  wellnessSetupSub: { fontSize: 13, color: '#6B7280', lineHeight: 20 },
-  wellnessSetupBtn: { alignSelf: 'flex-start', backgroundColor: '#EFF6FF', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 10 },
-  wellnessSetupBtnText: { fontSize: 14, fontWeight: '600', color: COLORS.ocean },
+  chipTemp: { fontSize: 26, fontWeight: '800', lineHeight: 28, fontVariant: ['tabular-nums'] },
+  chipLabel: { fontSize: 12, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 0.5 },
 
-  hubCard: {
-    backgroundColor: COLORS.ocean, borderRadius: 16, padding: 18, marginBottom: 16,
-    shadowColor: COLORS.ocean, shadowOpacity: 0.25, shadowRadius: 12, shadowOffset: { width: 0, height: 4 }, elevation: 4,
-  },
-  hubHeader: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 16 },
-  hubIconWrap: { width: 32, height: 32, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.15)', alignItems: 'center', justifyContent: 'center' },
-  hubTitle: { color: '#FFFFFF', fontSize: 16, fontWeight: '700' },
-  hubBadge: { backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3 },
-  hubBadgeText: { color: 'rgba(255,255,255,0.85)', fontSize: 11, fontWeight: '600' },
-  hubMetrics: { flexDirection: 'row', backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 12, padding: 14, marginBottom: 12 },
-  hubMetric: { flex: 1, alignItems: 'center', gap: 6 },
-  hubDivider: { width: 1, backgroundColor: 'rgba(255,255,255,0.15)', marginVertical: 2 },
-  hubMetricLabel: { color: 'rgba(255,255,255,0.55)', fontSize: 10, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.4, textAlign: 'center' },
-  hubMetricValue: { color: '#FFFFFF', fontSize: 14, fontWeight: '700', textAlign: 'center' },
-  hubLevelPill: { flexDirection: 'row', alignItems: 'center', gap: 4, borderRadius: 10, borderWidth: 1, paddingHorizontal: 8, paddingVertical: 3 },
-  hubLevelDot: { width: 6, height: 6, borderRadius: 3 },
-  hubLevelText: { fontSize: 11, fontWeight: '700' },
-  hubButtonRow: { flexDirection: 'row', gap: 10, marginBottom: 10 },
-  hubButton: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: 12, paddingVertical: 10, paddingHorizontal: 12, gap: 6 },
-  hubButtonAlt: { backgroundColor: 'rgba(59,130,246,0.25)' },
-  hubButtonExposure: { flex: 0, backgroundColor: 'rgba(255,255,255,0.07)', marginTop: 0 },
-  hubButtonText: { color: '#FFFFFF', fontSize: 13, fontWeight: '600', flex: 1 },
-  hubButtonMeta: { color: 'rgba(255,255,255,0.4)', fontSize: 11 },
+  summary: { gap: 4 },
+  summaryText: { fontSize: 17, fontWeight: '700', lineHeight: 23 },
+  summaryMeta: { fontSize: 14 },
+  personal: { fontSize: 15, marginTop: 4, lineHeight: 21 },
+  personalStrong: { fontWeight: '800' },
+  inlineLink: { flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 44 },
+  inlineLinkText: { fontSize: 15, fontWeight: '700', flexShrink: 1 },
 
-  sosButton: { backgroundColor: COLORS.lava, borderRadius: 16, padding: 24, alignItems: 'center', minHeight: 44, marginBottom: 0, marginTop: 16 },
-  sosButtonText: { color: '#fff', fontSize: 20, fontWeight: 'bold' },
-  sosButtonSubtext: { color: 'rgba(255,255,255,0.9)', fontSize: 14, marginTop: 4 },
+  attention: { borderRadius: 16, padding: 16, gap: 8 },
+  attentionLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  attentionLabel: { fontSize: 13, fontWeight: '800', letterSpacing: 0.8, textTransform: 'uppercase' },
+  attentionTitle: { fontSize: 20, fontWeight: '800', lineHeight: 25 },
+  attentionBody: { fontSize: 16, lineHeight: 22 },
+  attentionActions: { flexDirection: 'row', gap: 10, marginTop: 4 },
 
-  offlineCardBtn: { backgroundColor: '#1E293B', borderRadius: 14, padding: 18, alignItems: 'center', marginBottom: 12, borderWidth: 1, borderColor: '#334155' },
-  offlineCardBtnText: { color: '#F1F5F9', fontSize: 16, fontWeight: '700' },
-  offlineCardBtnSub: { color: '#94A3B8', fontSize: 12, marginTop: 4 },
+  solidBtn: { minHeight: 52, borderRadius: 12, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 16 },
+  solidBtnText: { fontSize: 17, fontWeight: '800' },
+  outlineBtn: { minHeight: 52, borderRadius: 12, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 16 },
+  outlineBtnText: { fontSize: 17, fontWeight: '700' },
 
-  footer: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: 24, opacity: 0.6 },
-  footerText: { fontSize: 14, color: '#6B7280', marginLeft: 8 },
+  tiles: { flexDirection: 'row', gap: 12 },
+  tile: { flex: 1, borderRadius: 16, padding: 14, gap: 8, minHeight: 156 },
+  tileTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  plusBtn: { width: 44, height: 44, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  tileTitle: { fontSize: 16, fontWeight: '800' },
+  tileBig: { fontSize: 28, fontWeight: '800', fontVariant: ['tabular-nums'] },
+  tileBigUnit: { fontSize: 15, fontWeight: '600' },
+  tileSub: { fontSize: 15, lineHeight: 20 },
+  track: { height: 8, borderRadius: 4, overflow: 'hidden' },
+  trackFill: { height: 8, borderRadius: 4 },
+
+  row: { flexDirection: 'row', alignItems: 'center', gap: 14, borderRadius: 16, padding: 16, minHeight: 72 },
+  rowText: { flex: 1, gap: 2 },
+  rowTitle: { fontSize: 17, fontWeight: '800' },
+  rowSub: { fontSize: 14, lineHeight: 19 },
+
+  sectionLabel: { fontSize: 13, fontWeight: '800', letterSpacing: 0.8, textTransform: 'uppercase', marginTop: 6 },
+  list: { borderRadius: 16, overflow: 'hidden' },
+  listRow: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 16, minHeight: 56 },
+  listLabel: { flex: 1, fontSize: 16, fontWeight: '700' },
 });

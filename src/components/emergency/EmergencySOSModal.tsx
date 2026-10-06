@@ -1,25 +1,59 @@
-import { Modal, View, Text, TouchableOpacity, StyleSheet, Linking, Alert, ScrollView } from 'react-native';
-import { X, Phone, Users, MapPin, AlertTriangle, CheckCircle, ChevronRight, Clock } from 'lucide-react-native';
-import { useState, useEffect, useRef } from 'react';
+// ─────────────────────────────────────────────────────────────────────────────
+// HeatGuard · Emergency SOS sheet
+// Opens straight to the actions (the press-and-hold already confirmed intent):
+//   Call 911 · Text my contacts + location · Call primary contact · Share location
+// "Not sure how serious it is?" leads to the optional symptom check.
+// Theme-aware: High Sun (light) / Night Shift (dark).
+// ─────────────────────────────────────────────────────────────────────────────
+
+import { Modal, View, Text, Pressable, StyleSheet, Linking, ScrollView } from 'react-native';
+import { X, Phone, Users, MapPin, AlertTriangle, Check, ChevronRight, ChevronLeft, Clock, Stethoscope } from 'lucide-react-native';
+import React, { useState, useEffect, useRef } from 'react';
 import { getPrimaryContact } from '../../features/emergency/storage/contactStorage';
 import { textContacts, shareLocation, call911 } from '../../features/emergency/emergencyMessaging';
+import { useSettings } from '../../context/SettingsContext';
 
 interface Props {
   visible: boolean;
   onClose: () => void;
 }
 
-const COLORS = {
-  lava: '#E63946',
-  ocean: '#1D3557',
-  glacier: '#8ECAE6',
-  success: '#2D9B6F',
-  ember: '#F4A261',
-  warning: '#F59E0B',
-  bg: '#F9FAFB',
-  border: '#E5E7EB',
-  muted: '#6B7280',
+// ─── Skins ────────────────────────────────────────────────────────────────────
+
+const SKIN = {
+  light: {
+    sheet: '#FFFFFF',
+    text: '#0A0A0A',
+    muted: '#3F3F3A',
+    border: '#D4D4CF',
+    strong: '#0A0A0A',
+    subtle: '#F4F4F0',
+    danger: '#C81E1E',
+    onDanger: '#FFFFFF',
+    primary: '#0B4FD6',
+    onPrimary: '#FFFFFF',
+    severe: '#C2410C',
+    mild: '#92400E',
+    pressed: '#E8E8E2',
+  },
+  dark: {
+    sheet: '#131C2E',
+    text: '#F1F5F9',
+    muted: '#A3B1C9',
+    border: '#2D3B5E',
+    strong: '#3B4B70',
+    subtle: '#1A2540',
+    danger: '#DC2626',
+    onDanger: '#FFFFFF',
+    primary: '#38BDF8',
+    onPrimary: '#04121F',
+    severe: '#FB923C',
+    mild: '#FBBF24',
+    pressed: '#1F2B49',
+  },
 };
+
+type Skin = typeof SKIN.light;
 
 // ─── Symptom definitions ──────────────────────────────────────────────────────
 
@@ -31,18 +65,16 @@ interface Symptom {
 }
 
 const SYMPTOMS: Symptom[] = [
-  { id: 'dizzy',       label: 'Dizziness',           severity: 'mild',     description: 'Feeling lightheaded or unsteady' },
-  { id: 'thirst',      label: 'Extreme thirst',       severity: 'mild',     description: 'Unusually strong thirst' },
-  { id: 'fatigue',     label: 'Heavy fatigue',        severity: 'mild',     description: 'Unusual tiredness or weakness' },
-  { id: 'nausea',      label: 'Nausea / vomiting',    severity: 'severe',   description: 'Feeling sick to stomach' },
-  { id: 'headache',    label: 'Severe headache',      severity: 'severe',   description: 'Intense, pounding headache' },
-  { id: 'skin',        label: 'Hot, dry skin',        severity: 'severe',   description: 'Skin hot to touch, not sweating' },
-  { id: 'confusion',   label: 'Confusion',            severity: 'critical', description: 'Difficulty thinking clearly' },
-  { id: 'chest',       label: 'Chest pain',           severity: 'critical', description: 'Pain or pressure in chest' },
-  { id: 'faint',       label: 'Fainting / collapsed', severity: 'critical', description: 'Lost or losing consciousness' },
+  { id: 'dizzy',     label: 'Dizziness',            severity: 'mild',     description: 'Feeling lightheaded or unsteady' },
+  { id: 'thirst',    label: 'Extreme thirst',       severity: 'mild',     description: 'Unusually strong thirst' },
+  { id: 'fatigue',   label: 'Heavy fatigue',        severity: 'mild',     description: 'Unusual tiredness or weakness' },
+  { id: 'nausea',    label: 'Nausea / vomiting',    severity: 'severe',   description: 'Feeling sick to stomach' },
+  { id: 'headache',  label: 'Severe headache',      severity: 'severe',   description: 'Intense, pounding headache' },
+  { id: 'skin',      label: 'Hot, dry skin',        severity: 'severe',   description: 'Skin hot to touch, not sweating' },
+  { id: 'confusion', label: 'Confusion',            severity: 'critical', description: 'Difficulty thinking clearly' },
+  { id: 'chest',     label: 'Chest pain',           severity: 'critical', description: 'Pain or pressure in chest' },
+  { id: 'faint',     label: 'Fainting / collapsed', severity: 'critical', description: 'Lost or losing consciousness' },
 ];
-
-// ─── Severity assessment ──────────────────────────────────────────────────────
 
 type SeverityLevel = 'none' | 'mild' | 'severe' | 'critical';
 
@@ -54,39 +86,53 @@ function assessSeverity(selectedIds: string[]): SeverityLevel {
   return 'mild';
 }
 
-function getSeverityConfig(level: SeverityLevel) {
+function severityColor(level: SeverityLevel | Symptom['severity'], c: Skin): string {
+  if (level === 'critical') return c.danger;
+  if (level === 'severe') return c.severe;
+  if (level === 'mild') return c.mild;
+  return c.muted;
+}
+
+function severityCopy(level: SeverityLevel) {
   switch (level) {
-    case 'critical': return { color: COLORS.lava,    label: 'CRITICAL',    icon: '🚨', action: 'Call 911 immediately',       subtext: 'Life-threatening symptoms detected' };
-    case 'severe':   return { color: COLORS.ember,   label: 'SEVERE',      icon: '⚠️', action: 'Contact emergency contacts',  subtext: 'Serious symptoms — act now' };
-    case 'mild':     return { color: COLORS.warning, label: 'MILD',        icon: '🌡️', action: 'Rest and hydrate',            subtext: 'Monitor symptoms closely' };
-    default:         return { color: COLORS.muted,   label: '',            icon: '',   action: '',                           subtext: '' };
+    case 'critical': return { label: 'Critical', subtext: 'These can be signs of heat stroke. Call 911.' };
+    case 'severe':   return { label: 'Serious', subtext: 'Get to a cool place and contact someone now.' };
+    case 'mild':     return { label: 'Mild', subtext: 'Cool down, drink water, and keep watching how you feel.' };
+    default:         return { label: '', subtext: '' };
   }
 }
 
-// ─── Step components ──────────────────────────────────────────────────────────
+type Step = 'actions' | 'symptom-check' | 'escalation';
 
-type Step = 'symptom-check' | 'escalation' | 'actions';
+const COUNTDOWN_S = 30;
+
+// ─── Component ────────────────────────────────────────────────────────────────
 
 export default function EmergencySOSModal({ visible, onClose }: Props) {
-  const [step, setStep] = useState<Step>('symptom-check');
+  const { isDark } = useSettings();
+  const c = isDark ? SKIN.dark : SKIN.light;
+
+  const [step, setStep] = useState<Step>('actions');
   const [selectedSymptoms, setSelectedSymptoms] = useState<string[]>([]);
-  const [countdown, setCountdown] = useState(30);
+  const [countdown, setCountdown] = useState(COUNTDOWN_S);
   const [countdownActive, setCountdownActive] = useState(false);
+  const [primary, setPrimary] = useState<ReturnType<typeof getPrimaryContact>>(null as any);
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Reset on open/close
   useEffect(() => {
     if (visible) {
-      setStep('symptom-check');
+      setStep('actions');
       setSelectedSymptoms([]);
-      setCountdown(30);
+      setCountdown(COUNTDOWN_S);
       setCountdownActive(false);
+      try { setPrimary(getPrimaryContact()); } catch { setPrimary(null as any); }
     } else {
       stopCountdown();
     }
   }, [visible]);
 
-  // Countdown timer
+  // Countdown timer (critical symptoms only)
   useEffect(() => {
     if (countdownActive) {
       countdownRef.current = setInterval(() => {
@@ -101,7 +147,12 @@ export default function EmergencySOSModal({ visible, onClose }: Props) {
         });
       }, 1000);
     }
-    return () => stopCountdown();
+    return () => {
+      if (countdownRef.current) {
+        clearInterval(countdownRef.current);
+        countdownRef.current = null;
+      }
+    };
   }, [countdownActive]);
 
   const stopCountdown = () => {
@@ -113,22 +164,7 @@ export default function EmergencySOSModal({ visible, onClose }: Props) {
   };
 
   const toggleSymptom = (id: string) => {
-    setSelectedSymptoms(prev =>
-      prev.includes(id) ? prev.filter(s => s !== id) : [...prev, id]
-    );
-  };
-
-  const handleNext = () => {
-    const severity = assessSeverity(selectedSymptoms);
-    if (severity === 'none') {
-      setStep('actions');
-      return;
-    }
-    setStep('escalation');
-    if (severity === 'critical') {
-      setCountdown(30);
-      setCountdownActive(true);
-    }
+    setSelectedSymptoms(prev => (prev.includes(id) ? prev.filter(s => s !== id) : [...prev, id]));
   };
 
   const handleCall911 = () => {
@@ -137,24 +173,16 @@ export default function EmergencySOSModal({ visible, onClose }: Props) {
     call911(); // iOS shows its own Call confirmation
   };
 
-  const handleContactFamily = () => {
+  const handleTextContacts = () => {
     stopCountdown();
-    const primaryContact = getPrimaryContact();
-    const buttons: { text: string; style?: 'cancel' | 'destructive' | 'default'; onPress?: () => void }[] = [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Text all contacts + my location', onPress: () => { textContacts(); } },
-    ];
-    if (primaryContact) {
-      buttons.push({
-        text: `Call ${primaryContact.name}`,
-        onPress: () => { onClose(); Linking.openURL(`tel:${primaryContact.phoneNumber}`); },
-      });
-    }
-    Alert.alert(
-      'Contact family',
-      'Texts open ready to send with a map link to where you are — just tap Send.',
-      buttons,
-    );
+    textContacts();
+  };
+
+  const handleCallPrimary = () => {
+    if (!primary) return;
+    stopCountdown();
+    onClose();
+    Linking.openURL(`tel:${primary.phoneNumber}`);
   };
 
   const handleShareLocation = () => {
@@ -162,218 +190,291 @@ export default function EmergencySOSModal({ visible, onClose }: Props) {
     shareLocation();
   };
 
-  const severity = assessSeverity(selectedSymptoms);
-  const severityConfig = getSeverityConfig(severity);
+  const handleSymptomsNext = () => {
+    const level = assessSeverity(selectedSymptoms);
+    if (level === 'none') {
+      setStep('actions');
+      return;
+    }
+    setStep('escalation');
+    if (level === 'critical') {
+      setCountdown(COUNTDOWN_S);
+      setCountdownActive(true);
+    }
+  };
 
-  // ── Step 1: Symptom Check ────────────────────────────────────────────────
+  const severity = assessSeverity(selectedSymptoms);
+  const sevCopy = severityCopy(severity);
+  const sevColor = severityColor(severity, c);
+
+  // ── Shared pieces ──────────────────────────────────────────────────────────
+
+  const CloseButton = () => (
+    <Pressable
+      onPress={() => { stopCountdown(); onClose(); }}
+      style={styles.iconBtn}
+      accessibilityRole="button"
+      accessibilityLabel="Close"
+      hitSlop={8}
+    >
+      <X size={26} color={c.text} />
+    </Pressable>
+  );
+
+  const BigAction = ({
+    label, sub, icon, bg, fg, onPress,
+  }: { label: string; sub: string; icon: React.ReactNode; bg: string; fg: string; onPress: () => void }) => (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`${label}. ${sub}`}
+      style={({ pressed }) => [styles.bigAction, { backgroundColor: bg, opacity: pressed ? 0.85 : 1 }]}
+    >
+      {icon}
+      <View style={styles.bigActionText}>
+        <Text style={[styles.bigActionLabel, { color: fg }]}>{label}</Text>
+        <Text style={[styles.bigActionSub, { color: fg }]}>{sub}</Text>
+      </View>
+    </Pressable>
+  );
+
+  const OutlineAction = ({
+    label, icon, onPress, color,
+  }: { label: string; icon: React.ReactNode; onPress: () => void; color?: string }) => (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      style={({ pressed }) => [
+        styles.outlineAction,
+        { borderColor: color ?? c.strong, backgroundColor: pressed ? c.pressed : 'transparent' },
+      ]}
+    >
+      {icon}
+      <Text style={[styles.outlineLabel, { color: color ?? c.text }]}>{label}</Text>
+    </Pressable>
+  );
+
+  // ── Step: Actions (default) ────────────────────────────────────────────────
+
+  const renderActions = () => (
+    <>
+      <View style={styles.header}>
+        <Text style={[styles.title, { color: c.text }]} accessibilityRole="header">Get help now</Text>
+        <CloseButton />
+      </View>
+
+      <View style={styles.stack}>
+        <BigAction
+          label="Call 911"
+          sub="Emergency services"
+          icon={<Phone size={30} color={c.onDanger} />}
+          bg={c.danger}
+          fg={c.onDanger}
+          onPress={handleCall911}
+        />
+        <BigAction
+          label="Text my contacts"
+          sub="Sends where you are with a map link"
+          icon={<Users size={30} color={c.onPrimary} />}
+          bg={c.primary}
+          fg={c.onPrimary}
+          onPress={handleTextContacts}
+        />
+        {primary ? (
+          <OutlineAction
+            label={`Call ${primary.name}`}
+            icon={<Phone size={20} color={c.text} />}
+            onPress={handleCallPrimary}
+          />
+        ) : null}
+        <OutlineAction
+          label="Share my location"
+          icon={<MapPin size={20} color={c.text} />}
+          onPress={handleShareLocation}
+        />
+      </View>
+
+      <Pressable
+        onPress={() => setStep('symptom-check')}
+        style={styles.linkRow}
+        accessibilityRole="button"
+        accessibilityLabel="Not sure how serious it is? Check symptoms"
+      >
+        <Stethoscope size={18} color={c.text} />
+        <Text style={[styles.linkText, { color: c.text }]}>Not sure how serious it is? Check symptoms</Text>
+        <ChevronRight size={18} color={c.text} />
+      </Pressable>
+
+      <Text style={[styles.footnote, { color: c.muted }]}>
+        HeatGuard doesn't contact emergency services for you. Calls and texts open ready to go, and you tap to send.
+      </Text>
+    </>
+  );
+
+  // ── Step: Symptom check ────────────────────────────────────────────────────
+
   const renderSymptomCheck = () => (
     <>
       <View style={styles.header}>
-        <Text style={styles.title}>🆘 Emergency SOS</Text>
-        <TouchableOpacity onPress={onClose} style={styles.closeBtn} accessibilityLabel="Close">
-          <X size={24} color={COLORS.ocean} />
-        </TouchableOpacity>
+        <Pressable onPress={() => setStep('actions')} style={styles.backBtn} accessibilityRole="button" accessibilityLabel="Back">
+          <ChevronLeft size={22} color={c.text} />
+          <Text style={[styles.backText, { color: c.text }]}>Back</Text>
+        </Pressable>
+        <CloseButton />
       </View>
 
-      <Text style={styles.stepLabel}>STEP 1 OF 2 — SYMPTOMS</Text>
-      <Text style={styles.subtitle}>Select any symptoms you are experiencing right now:</Text>
+      <Text style={[styles.sectionTitle, { color: c.text }]}>What are you feeling right now?</Text>
 
       <ScrollView style={styles.symptomScroll} showsVerticalScrollIndicator={false}>
         {SYMPTOMS.map(symptom => {
           const selected = selectedSymptoms.includes(symptom.id);
-          const chipColor = symptom.severity === 'critical' ? COLORS.lava : symptom.severity === 'severe' ? COLORS.ember : COLORS.warning;
+          const chipColor = severityColor(symptom.severity, c);
           return (
-            <TouchableOpacity
+            <Pressable
               key={symptom.id}
-              style={[styles.symptomRow, selected && { borderColor: chipColor, backgroundColor: `${chipColor}10` }]}
+              style={[
+                styles.symptomRow,
+                { borderColor: selected ? chipColor : c.border, backgroundColor: selected ? c.subtle : 'transparent' },
+              ]}
               onPress={() => toggleSymptom(symptom.id)}
               accessibilityRole="checkbox"
               accessibilityState={{ checked: selected }}
-              accessibilityLabel={symptom.label}
+              accessibilityLabel={`${symptom.label}. ${symptom.description}`}
             >
-              <View style={[styles.symptomCheck, selected && { backgroundColor: chipColor, borderColor: chipColor }]}>
-                {selected && <CheckCircle size={16} color="white" />}
+              <View
+                style={[
+                  styles.symptomCheck,
+                  { borderColor: selected ? chipColor : c.strong, backgroundColor: selected ? chipColor : 'transparent' },
+                ]}
+              >
+                {selected && <Check size={16} color="#FFFFFF" strokeWidth={3} />}
               </View>
               <View style={styles.symptomInfo}>
-                <Text style={[styles.symptomLabel, selected && { color: chipColor }]}>{symptom.label}</Text>
-                <Text style={styles.symptomDesc}>{symptom.description}</Text>
+                <Text style={[styles.symptomLabel, { color: c.text }]}>{symptom.label}</Text>
+                <Text style={[styles.symptomDesc, { color: c.muted }]}>{symptom.description}</Text>
               </View>
               {symptom.severity === 'critical' && (
-                <View style={styles.criticalChip}><Text style={styles.criticalChipText}>Critical</Text></View>
+                <Text style={[styles.criticalTag, { color: c.danger }]}>Critical</Text>
               )}
-            </TouchableOpacity>
+            </Pressable>
           );
         })}
       </ScrollView>
 
-      {/* Live severity preview */}
       {severity !== 'none' && (
-        <View style={[styles.previewBanner, { backgroundColor: `${severityConfig.color}15`, borderColor: severityConfig.color }]}>
-          <AlertTriangle size={16} color={severityConfig.color} />
-          <Text style={[styles.previewText, { color: severityConfig.color }]}>
-            {severityConfig.label}: {severityConfig.subtext}
+        <View style={[styles.previewBanner, { borderColor: sevColor }]}>
+          <AlertTriangle size={18} color={sevColor} />
+          <Text style={[styles.previewText, { color: c.text }]}>
+            <Text style={{ color: sevColor, fontWeight: '800' }}>{sevCopy.label}: </Text>
+            {sevCopy.subtext}
           </Text>
         </View>
       )}
 
-      <View style={styles.stepActions}>
-        <TouchableOpacity style={styles.skipBtn} onPress={() => setStep('actions')}>
-          <Text style={styles.skipBtnText}>Skip to actions</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.nextBtn, { backgroundColor: severity === 'none' ? COLORS.muted : severityConfig.color }]}
-          onPress={handleNext}
-          accessibilityRole="button"
-        >
-          <Text style={styles.nextBtnText}>
-            {severity === 'none' ? 'Continue' : `Get ${severityConfig.label === 'CRITICAL' ? 'Help Now' : 'Guidance'}`}
-          </Text>
-          <ChevronRight size={18} color="white" />
-        </TouchableOpacity>
-      </View>
-
-      {/* Always-visible 911 */}
-      <TouchableOpacity style={styles.directCall} onPress={handleCall911}>
-        <Phone size={16} color={COLORS.lava} />
-        <Text style={styles.directCallText}>Call 911 directly</Text>
-      </TouchableOpacity>
+      <Pressable
+        onPress={handleSymptomsNext}
+        accessibilityRole="button"
+        style={({ pressed }) => [
+          styles.primaryBtn,
+          { backgroundColor: severity === 'critical' ? c.danger : c.primary, opacity: pressed ? 0.85 : 1 },
+        ]}
+      >
+        <Text style={[styles.primaryBtnText, { color: severity === 'critical' ? c.onDanger : c.onPrimary }]}>
+          {severity === 'none' ? 'Back to help options' : 'See what to do'}
+        </Text>
+      </Pressable>
     </>
   );
 
-  // ── Step 2: Escalation ───────────────────────────────────────────────────
+  // ── Step: Escalation ───────────────────────────────────────────────────────
+
   const renderEscalation = () => {
     const isCritical = severity === 'critical';
-    const affectedSymptoms = SYMPTOMS.filter(s => selectedSymptoms.includes(s.id));
-
     return (
       <>
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => { stopCountdown(); setStep('symptom-check'); }} style={styles.closeBtn} accessibilityLabel="Back">
-            <Text style={styles.backText}>← Back</Text>
-          </TouchableOpacity>
-          <TouchableOpacity onPress={() => { stopCountdown(); onClose(); }} style={styles.closeBtn} accessibilityLabel="Close">
-            <X size={24} color={COLORS.ocean} />
-          </TouchableOpacity>
+          <Pressable
+            onPress={() => { stopCountdown(); setStep('symptom-check'); }}
+            style={styles.backBtn}
+            accessibilityRole="button"
+            accessibilityLabel="Back"
+          >
+            <ChevronLeft size={22} color={c.text} />
+            <Text style={[styles.backText, { color: c.text }]}>Back</Text>
+          </Pressable>
+          <CloseButton />
         </View>
 
-        <Text style={styles.stepLabel}>STEP 2 OF 2 — RECOMMENDED ACTION</Text>
-
-        {/* Severity banner */}
-        <View style={[styles.severityBanner, { backgroundColor: severityConfig.color }]}>
-          <Text style={styles.severityIcon}>{severityConfig.icon}</Text>
+        <View style={[styles.severityBanner, { borderColor: sevColor, backgroundColor: c.subtle }]}>
+          <AlertTriangle size={26} color={sevColor} />
           <View style={styles.severityTextBlock}>
-            <Text style={styles.severityLabel}>{severityConfig.label} SEVERITY</Text>
-            <Text style={styles.severitySubtext}>{severityConfig.subtext}</Text>
+            <Text style={[styles.severityLabel, { color: sevColor }]}>{sevCopy.label}</Text>
+            <Text style={[styles.severitySubtext, { color: c.text }]}>{sevCopy.subtext}</Text>
           </View>
         </View>
 
-        {/* Detected symptoms summary */}
-        <Text style={styles.detectedLabel}>Symptoms detected:</Text>
-        <View style={styles.detectedRow}>
-          {affectedSymptoms.map(s => (
-            <View key={s.id} style={[styles.detectedChip, { borderColor: severityConfig.color }]}>
-              <Text style={[styles.detectedChipText, { color: severityConfig.color }]}>{s.label}</Text>
-            </View>
-          ))}
-        </View>
-
-        {/* Auto-escalation countdown for critical */}
         {isCritical && countdownActive && (
-          <View style={styles.countdownBanner}>
-            <Clock size={18} color={COLORS.lava} />
-            <Text style={styles.countdownText}>
-              Opening 911 call in <Text style={styles.countdownNum}>{countdown}s</Text>
+          <View style={[styles.countdownBanner, { borderColor: c.danger }]}>
+            <Clock size={18} color={c.danger} />
+            <Text style={[styles.countdownText, { color: c.text }]}>
+              Opening a 911 call in <Text style={{ color: c.danger, fontWeight: '800' }}>{countdown}s</Text>
             </Text>
-            <TouchableOpacity onPress={stopCountdown} style={styles.countdownCancelBtn}>
-              <Text style={styles.countdownCancelText}>Cancel</Text>
-            </TouchableOpacity>
+            <Pressable
+              onPress={stopCountdown}
+              style={[styles.countdownCancel, { borderColor: c.strong }]}
+              accessibilityRole="button"
+              accessibilityLabel="Cancel automatic 911 call"
+            >
+              <Text style={[styles.countdownCancelText, { color: c.text }]}>Cancel</Text>
+            </Pressable>
           </View>
         )}
 
-        {/* Recommended action */}
-        <Text style={styles.recommendLabel}>Recommended action:</Text>
-
-        {isCritical ? (
-          <TouchableOpacity style={[styles.primaryAction, { backgroundColor: COLORS.lava }]} onPress={handleCall911}>
-            <Phone size={28} color="white" />
-            <View style={styles.actionTextBlock}>
-              <Text style={styles.actionTitle}>Call 911 Now</Text>
-              <Text style={styles.actionSub}>Heat stroke is life-threatening</Text>
-            </View>
-          </TouchableOpacity>
-        ) : (
-          <TouchableOpacity style={[styles.primaryAction, { backgroundColor: COLORS.ocean }]} onPress={handleContactFamily}>
-            <Users size={28} color="white" />
-            <View style={styles.actionTextBlock}>
-              <Text style={styles.actionTitle}>Contact Emergency Contact</Text>
-              <Text style={styles.actionSub}>Alert your family or caregiver</Text>
-            </View>
-          </TouchableOpacity>
-        )}
-
-        {/* Secondary actions */}
-        <View style={styles.secondaryActions}>
-          {isCritical && (
-            <TouchableOpacity style={styles.secondaryBtn} onPress={handleContactFamily}>
-              <Users size={18} color={COLORS.ocean} />
-              <Text style={styles.secondaryBtnText}>Also contact family</Text>
-            </TouchableOpacity>
+        <View style={styles.stack}>
+          {isCritical ? (
+            <BigAction
+              label="Call 911 now"
+              sub="Heat stroke is life-threatening"
+              icon={<Phone size={30} color={c.onDanger} />}
+              bg={c.danger}
+              fg={c.onDanger}
+              onPress={handleCall911}
+            />
+          ) : (
+            <BigAction
+              label="Text my contacts"
+              sub="Sends where you are with a map link"
+              icon={<Users size={30} color={c.onPrimary} />}
+              bg={c.primary}
+              fg={c.onPrimary}
+              onPress={handleTextContacts}
+            />
           )}
-          <TouchableOpacity style={styles.secondaryBtn} onPress={handleShareLocation}>
-            <MapPin size={18} color={COLORS.ocean} />
-            <Text style={styles.secondaryBtnText}>Share my location</Text>
-          </TouchableOpacity>
+          {isCritical && (
+            <OutlineAction label="Also text my contacts" icon={<Users size={20} color={c.text} />} onPress={handleTextContacts} />
+          )}
+          <OutlineAction label="Share my location" icon={<MapPin size={20} color={c.text} />} onPress={handleShareLocation} />
           {!isCritical && (
-            <TouchableOpacity style={[styles.secondaryBtn, { borderColor: COLORS.lava }]} onPress={handleCall911}>
-              <Phone size={18} color={COLORS.lava} />
-              <Text style={[styles.secondaryBtnText, { color: COLORS.lava }]}>Call 911 instead</Text>
-            </TouchableOpacity>
+            <OutlineAction
+              label="Call 911 instead"
+              icon={<Phone size={20} color={c.danger} />}
+              onPress={handleCall911}
+              color={c.danger}
+            />
           )}
         </View>
       </>
     );
   };
 
-  // ── Step 3: Direct Actions (no symptoms selected) ────────────────────────
-  const renderActions = () => (
-    <>
-      <View style={styles.header}>
-        <Text style={styles.title}>🆘 Emergency SOS</Text>
-        <TouchableOpacity onPress={onClose} style={styles.closeBtn} accessibilityLabel="Close">
-          <X size={24} color={COLORS.ocean} />
-        </TouchableOpacity>
-      </View>
-      <Text style={styles.subtitle}>Choose an emergency action:</Text>
-      <View style={styles.actionsGrid}>
-        <TouchableOpacity style={[styles.actionButton, { backgroundColor: COLORS.lava }]} onPress={handleCall911}>
-          <Phone size={32} color="white" />
-          <Text style={styles.actionText}>Call 911</Text>
-          <Text style={styles.actionSubtext}>Emergency services</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={[styles.actionButton, { backgroundColor: COLORS.ocean }]} onPress={handleContactFamily}>
-          <Users size={32} color="white" />
-          <Text style={styles.actionText}>Contact Family</Text>
-          <Text style={styles.actionSubtext}>Alert contacts</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={[styles.actionButton, { backgroundColor: COLORS.success }]} onPress={handleShareLocation}>
-          <MapPin size={32} color="white" />
-          <Text style={styles.actionText}>Share Location</Text>
-          <Text style={styles.actionSubtext}>Send GPS coordinates</Text>
-        </TouchableOpacity>
-      </View>
-      <TouchableOpacity style={styles.backToSymptoms} onPress={() => setStep('symptom-check')}>
-        <Text style={styles.backToSymptomsText}>← Check symptoms first</Text>
-      </TouchableOpacity>
-    </>
-  );
-
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       <View style={styles.overlay}>
-        <View style={styles.modal}>
+        <View style={[styles.sheet, { backgroundColor: c.sheet }]}>
+          {step === 'actions' && renderActions()}
           {step === 'symptom-check' && renderSymptomCheck()}
           {step === 'escalation' && renderEscalation()}
-          {step === 'actions' && renderActions()}
         </View>
       </View>
     </Modal>
@@ -381,75 +482,47 @@ export default function EmergencySOSModal({ visible, onClose }: Props) {
 }
 
 const styles = StyleSheet.create({
-  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.65)', justifyContent: 'flex-end' },
-  modal: { backgroundColor: 'white', borderTopLeftRadius: 28, borderTopRightRadius: 28, padding: 24, paddingBottom: 40, maxHeight: '90%' },
-  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 },
-  title: { fontSize: 22, fontWeight: '800', color: COLORS.lava },
-  closeBtn: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
-  backText: { fontSize: 15, color: COLORS.ocean, fontWeight: '600' },
-  stepLabel: { fontSize: 11, fontWeight: '700', color: COLORS.muted, letterSpacing: 1, marginBottom: 6 },
-  subtitle: { fontSize: 15, color: '#374151', marginBottom: 16, lineHeight: 22 },
+  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' },
+  sheet: { borderTopLeftRadius: 28, borderTopRightRadius: 28, padding: 22, paddingBottom: 40, maxHeight: '92%' },
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, minHeight: 44 },
+  title: { fontSize: 26, fontWeight: '800', letterSpacing: -0.3 },
+  iconBtn: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+  backBtn: { flexDirection: 'row', alignItems: 'center', minHeight: 44, paddingRight: 12 },
+  backText: { fontSize: 17, fontWeight: '600' },
 
-  // Symptom list
-  symptomScroll: { maxHeight: 340, marginBottom: 12 },
-  symptomRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 12, borderRadius: 12, borderWidth: 1.5, borderColor: COLORS.border, marginBottom: 8, gap: 12 },
-  symptomCheck: { width: 26, height: 26, borderRadius: 13, borderWidth: 2, borderColor: COLORS.border, alignItems: 'center', justifyContent: 'center', backgroundColor: 'white' },
+  stack: { gap: 10 },
+  bigAction: { flexDirection: 'row', alignItems: 'center', gap: 16, borderRadius: 18, paddingVertical: 18, paddingHorizontal: 20, minHeight: 80 },
+  bigActionText: { flex: 1 },
+  bigActionLabel: { fontSize: 21, fontWeight: '800' },
+  bigActionSub: { fontSize: 14, marginTop: 2, opacity: 0.92 },
+  outlineAction: { flexDirection: 'row', alignItems: 'center', gap: 12, borderRadius: 14, borderWidth: 2, paddingHorizontal: 16, minHeight: 54 },
+  outlineLabel: { fontSize: 17, fontWeight: '700' },
+
+  linkRow: { flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 48, marginTop: 14 },
+  linkText: { flex: 1, fontSize: 16, fontWeight: '600', textDecorationLine: 'underline' },
+  footnote: { fontSize: 13, lineHeight: 19, marginTop: 6 },
+
+  sectionTitle: { fontSize: 20, fontWeight: '800', marginBottom: 12 },
+  symptomScroll: { maxHeight: 360, marginBottom: 12 },
+  symptomRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 12, borderRadius: 12, borderWidth: 1.5, marginBottom: 8, gap: 12, minHeight: 56 },
+  symptomCheck: { width: 28, height: 28, borderRadius: 8, borderWidth: 2, alignItems: 'center', justifyContent: 'center' },
   symptomInfo: { flex: 1 },
-  symptomLabel: { fontSize: 15, fontWeight: '600', color: COLORS.ocean },
-  symptomDesc: { fontSize: 12, color: COLORS.muted, marginTop: 1 },
-  criticalChip: { backgroundColor: `${COLORS.lava}20`, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8 },
-  criticalChipText: { fontSize: 11, fontWeight: '700', color: COLORS.lava },
+  symptomLabel: { fontSize: 16, fontWeight: '700' },
+  symptomDesc: { fontSize: 13, marginTop: 1 },
+  criticalTag: { fontSize: 12, fontWeight: '800' },
 
-  // Preview banner
-  previewBanner: { flexDirection: 'row', alignItems: 'center', gap: 8, padding: 12, borderRadius: 10, borderWidth: 1.5, marginBottom: 12 },
-  previewText: { fontSize: 13, fontWeight: '600', flex: 1 },
+  previewBanner: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 12, borderRadius: 12, borderWidth: 2, marginBottom: 12 },
+  previewText: { fontSize: 14, flex: 1, lineHeight: 20 },
+  primaryBtn: { minHeight: 54, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
+  primaryBtnText: { fontSize: 17, fontWeight: '800' },
 
-  // Step actions
-  stepActions: { flexDirection: 'row', gap: 10, marginBottom: 10 },
-  skipBtn: { flex: 1, paddingVertical: 14, alignItems: 'center', borderRadius: 12, borderWidth: 1.5, borderColor: COLORS.border },
-  skipBtnText: { fontSize: 15, color: COLORS.muted, fontWeight: '500' },
-  nextBtn: { flex: 2, flexDirection: 'row', paddingVertical: 14, alignItems: 'center', justifyContent: 'center', borderRadius: 12, gap: 6 },
-  nextBtnText: { fontSize: 15, fontWeight: '700', color: 'white' },
-
-  // Direct 911
-  directCall: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 10 },
-  directCallText: { fontSize: 14, color: COLORS.lava, fontWeight: '600' },
-
-  // Severity banner
-  severityBanner: { flexDirection: 'row', alignItems: 'center', borderRadius: 14, padding: 16, marginBottom: 16, gap: 12 },
-  severityIcon: { fontSize: 28 },
+  severityBanner: { flexDirection: 'row', alignItems: 'center', borderRadius: 14, borderWidth: 2, padding: 16, marginBottom: 14, gap: 12 },
   severityTextBlock: { flex: 1 },
-  severityLabel: { fontSize: 17, fontWeight: '800', color: 'white' },
-  severitySubtext: { fontSize: 13, color: 'rgba(255,255,255,0.85)', marginTop: 2 },
+  severityLabel: { fontSize: 19, fontWeight: '800' },
+  severitySubtext: { fontSize: 15, marginTop: 2, lineHeight: 21 },
 
-  // Detected symptoms
-  detectedLabel: { fontSize: 13, fontWeight: '600', color: COLORS.muted, marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.5 },
-  detectedRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 16 },
-  detectedChip: { borderWidth: 1.5, borderRadius: 20, paddingHorizontal: 10, paddingVertical: 4 },
-  detectedChipText: { fontSize: 12, fontWeight: '600' },
-
-  // Countdown
-  countdownBanner: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FEF2F2', borderRadius: 12, padding: 12, marginBottom: 14, gap: 8, borderWidth: 1, borderColor: `${COLORS.lava}40` },
-  countdownText: { flex: 1, fontSize: 14, color: COLORS.ocean, fontWeight: '500' },
-  countdownNum: { fontWeight: '800', color: COLORS.lava, fontSize: 16 },
-  countdownCancelBtn: { backgroundColor: COLORS.border, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 },
-  countdownCancelText: { fontSize: 13, fontWeight: '600', color: COLORS.ocean },
-
-  // Actions
-  recommendLabel: { fontSize: 13, fontWeight: '600', color: COLORS.muted, marginBottom: 10, textTransform: 'uppercase', letterSpacing: 0.5 },
-  primaryAction: { flexDirection: 'row', alignItems: 'center', borderRadius: 16, padding: 18, gap: 16, marginBottom: 12 },
-  actionTextBlock: { flex: 1 },
-  actionTitle: { fontSize: 18, fontWeight: '700', color: 'white' },
-  actionSub: { fontSize: 13, color: 'rgba(255,255,255,0.8)', marginTop: 2 },
-  secondaryActions: { gap: 8 },
-  secondaryBtn: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 12, paddingHorizontal: 14, borderRadius: 12, borderWidth: 1.5, borderColor: COLORS.border },
-  secondaryBtnText: { fontSize: 15, color: COLORS.ocean, fontWeight: '500' },
-
-  // Direct actions step
-  actionsGrid: { gap: 12, marginBottom: 16 },
-  actionButton: { borderRadius: 16, padding: 20, alignItems: 'center', minHeight: 44 },
-  actionText: { color: 'white', fontSize: 18, fontWeight: 'bold', marginTop: 12 },
-  actionSubtext: { color: 'rgba(255,255,255,0.8)', fontSize: 14, marginTop: 4 },
-  backToSymptoms: { alignItems: 'center', paddingVertical: 8 },
-  backToSymptomsText: { fontSize: 14, color: COLORS.ocean, fontWeight: '600' },
+  countdownBanner: { flexDirection: 'row', alignItems: 'center', borderRadius: 12, borderWidth: 2, padding: 12, marginBottom: 14, gap: 8 },
+  countdownText: { flex: 1, fontSize: 15, fontWeight: '600' },
+  countdownCancel: { borderWidth: 2, borderRadius: 10, paddingHorizontal: 14, minHeight: 44, justifyContent: 'center' },
+  countdownCancelText: { fontSize: 15, fontWeight: '700' },
 });
