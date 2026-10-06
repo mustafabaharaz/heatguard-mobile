@@ -1,27 +1,26 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // FILE: app/profile/household.tsx
 // HeatGuard · Home & lifestyle
-//  - Car riders, outdoor work, living alone, home AC
-//  - Daily check-in ("Are you OK today?") on/off + time
+//  - Car riders, outdoor work, living alone, age 65+, health condition
+//  - Home AC moved to Profile → Home surroundings (app/profile/home.tsx)
+//  - Daily check-in moved to Profile → Daily check-in (app/checkin/settings.tsx)
 // ─────────────────────────────────────────────────────────────────────────────
 
 import React, { useState } from 'react';
-import { View, Text, ScrollView, Pressable, StyleSheet, Switch } from 'react-native';
+import { View, Text, ScrollView, Pressable, StyleSheet } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ChevronLeft, BellRing } from 'lucide-react-native';
+import { ChevronLeft, ChevronRight, AirVent } from 'lucide-react-native';
 import { useSettings } from '../../src/context/SettingsContext';
 import HouseholdQuestions from '../../src/components/profile/HouseholdQuestions';
 import {
+  getHeatProfile,
   getHouseholdAnswers,
   saveHouseholdAnswers,
+  isHomeVulnerable,
   type HouseholdAnswers,
 } from '../../src/features/profile/storage/profileStorage';
-import {
-  getDailyCheckIn, setDailyCheckIn, type DailyCheckInSettings,
-} from '../../src/features/checkin/dailyCheckIn';
-import { registerForPushNotifications } from '../../src/services/notifications/push';
 
 const SKIN = {
   light: {
@@ -35,9 +34,7 @@ const SKIN = {
     selectedBg: '#EAF0FF',
     recBg: '#FFF4CC',
     recText: '#5C4300',
-    chipActiveBg: '#0A0A0A',
-    chipActiveText: '#FFFFFF',
-    divider: '#E2E2DC',
+    pressed: '#ECECE6',
   },
   dark: {
     bg: '#0B1220',
@@ -50,18 +47,9 @@ const SKIN = {
     selectedBg: '#13263D',
     recBg: '#2A2410',
     recText: '#FBBF24',
-    chipActiveBg: '#38BDF8',
-    chipActiveText: '#04121F',
-    divider: '#24314F',
+    pressed: '#1A2540',
   },
 };
-
-const HOURS = [7, 8, 9, 10, 12, 15, 18, 20];
-
-function hourLabel(h: number): string {
-  const suffix = h < 12 ? 'AM' : 'PM';
-  return `${h % 12 === 0 ? 12 : h % 12} ${suffix}`;
-}
 
 export default function HouseholdScreen() {
   const router = useRouter();
@@ -71,19 +59,13 @@ export default function HouseholdScreen() {
   const borderWidth = isDark ? 1 : 2;
 
   const [answers, setAnswers] = useState<HouseholdAnswers>(() => getHouseholdAnswers());
-  const [checkIn, setCheckIn] = useState<DailyCheckInSettings>(() => getDailyCheckIn());
-
-  const recommended = answers.livesAlone || answers.noAC || answers.acUnreliable;
-
-  const updateCheckIn = async (next: DailyCheckInSettings) => {
-    setCheckIn(next);
-    if (next.enabled) await registerForPushNotifications().catch(() => null);
-    await setDailyCheckIn(next);
-  };
+  const homeAnswered = getHeatProfile().homeAnswered;
+  const suggestHome = !homeAnswered && isHomeVulnerable({ ...getHeatProfile(), ...answers });
 
   const handleSave = () => {
     saveHouseholdAnswers(answers);
-    router.back();
+    if (suggestHome) router.replace('/profile/home');
+    else router.back();
   };
 
   return (
@@ -103,64 +85,26 @@ export default function HouseholdScreen() {
 
         <HouseholdQuestions value={answers} onChange={setAnswers} colors={c} />
 
-        {/* ── Daily check-in ───────────────────────────────────────────────── */}
-        <View style={[styles.checkCard, { backgroundColor: c.card, borderColor: c.border, borderWidth }]}>
-          <View style={styles.checkHeader}>
-            <BellRing size={24} color={c.text} />
-            <View style={styles.flex1}>
-              <Text style={[styles.checkTitle, { color: c.text }]}>Daily check-in</Text>
-              <Text style={[styles.checkSub, { color: c.muted }]}>
-                Each day HeatGuard asks "Are you OK today?" If you don't answer, it reminds you again and makes texting your contacts one tap.
-              </Text>
-            </View>
-            <Switch
-              value={checkIn.enabled}
-              onValueChange={v => updateCheckIn({ ...checkIn, enabled: v })}
-              trackColor={{ true: c.accent, false: c.divider }}
-              accessibilityLabel="Daily check-in"
-            />
+        <Pressable
+          onPress={() => { saveHouseholdAnswers(answers); router.replace('/profile/home'); }}
+          accessibilityRole="button"
+          style={({ pressed }) => [
+            styles.linkRow,
+            { backgroundColor: pressed ? c.pressed : c.card, borderColor: c.border, borderWidth },
+          ]}
+        >
+          <AirVent size={24} color={c.text} />
+          <View style={styles.flex1}>
+            <Text style={[styles.linkTitle, { color: c.text }]}>Home surroundings</Text>
+            <Text style={[styles.linkSub, { color: c.muted }]}>Your AC at home, free cooling tips, and bill help</Text>
           </View>
-
-          {recommended && !checkIn.enabled && (
-            <View style={[styles.rec, { backgroundColor: c.recBg }]}>
-              <Text style={[styles.recText, { color: c.recText }]}>
-                Recommended for you based on your answers above.
-              </Text>
+          {suggestHome && (
+            <View style={[styles.badge, { backgroundColor: c.recBg }]}>
+              <Text style={[styles.badgeText, { color: c.recText }]}>Next</Text>
             </View>
           )}
-
-          {checkIn.enabled && (
-            <>
-              <Text style={[styles.label, { color: c.muted }]}>Check in at</Text>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.hourRow}>
-                {HOURS.map(h => {
-                  const active = h === checkIn.hour;
-                  return (
-                    <Pressable
-                      key={h}
-                      onPress={() => updateCheckIn({ ...checkIn, hour: h, minute: 0 })}
-                      accessibilityRole="radio"
-                      accessibilityState={{ checked: active }}
-                      style={[
-                        styles.hourChip,
-                        {
-                          backgroundColor: active ? c.chipActiveBg : c.card,
-                          borderColor: active ? c.chipActiveBg : c.border,
-                          borderWidth,
-                        },
-                      ]}
-                    >
-                      <Text style={[styles.hourText, { color: active ? c.chipActiveText : c.text }]}>{hourLabel(h)}</Text>
-                    </Pressable>
-                  );
-                })}
-              </ScrollView>
-              <Text style={[styles.note, { color: c.muted }]}>
-                Tip: tell your emergency contacts you use HeatGuard check-ins, so a call from you or a missed one gets attention.
-              </Text>
-            </>
-          )}
-        </View>
+          <ChevronRight size={20} color={c.muted} />
+        </Pressable>
       </ScrollView>
 
       <View style={[styles.footer, { paddingBottom: insets.bottom + 16 }]}>
@@ -169,7 +113,7 @@ export default function HouseholdScreen() {
           accessibilityRole="button"
           style={({ pressed }) => [styles.saveBtn, { backgroundColor: c.accent, opacity: pressed ? 0.85 : 1 }]}
         >
-          <Text style={[styles.saveText, { color: c.onAccent }]}>Save</Text>
+          <Text style={[styles.saveText, { color: c.onAccent }]}>{suggestHome ? 'Save & continue' : 'Save'}</Text>
         </Pressable>
       </View>
     </View>
@@ -185,17 +129,11 @@ const styles = StyleSheet.create({
   title: { fontSize: 28, fontWeight: '800', letterSpacing: -0.3, marginTop: 8 },
   subtitle: { fontSize: 16, lineHeight: 23, marginTop: -6, marginBottom: 6 },
 
-  checkCard: { borderRadius: 16, padding: 16, gap: 10, marginTop: 6 },
-  checkHeader: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
-  checkTitle: { fontSize: 18, fontWeight: '800' },
-  checkSub: { fontSize: 14, lineHeight: 20, marginTop: 2 },
-  rec: { borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8 },
-  recText: { fontSize: 14, fontWeight: '800' },
-  label: { fontSize: 13, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 0.6 },
-  hourRow: { gap: 8, paddingRight: 8 },
-  hourChip: { minHeight: 46, paddingHorizontal: 16, borderRadius: 999, alignItems: 'center', justifyContent: 'center' },
-  hourText: { fontSize: 16, fontWeight: '800' },
-  note: { fontSize: 13, lineHeight: 19 },
+  linkRow: { flexDirection: 'row', alignItems: 'center', gap: 14, borderRadius: 16, padding: 16, minHeight: 72, marginTop: 6 },
+  linkTitle: { fontSize: 17, fontWeight: '800' },
+  linkSub: { fontSize: 14, lineHeight: 19, marginTop: 2 },
+  badge: { borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4 },
+  badgeText: { fontSize: 13, fontWeight: '800' },
 
   footer: { paddingHorizontal: 20, paddingTop: 8 },
   saveBtn: { minHeight: 56, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },

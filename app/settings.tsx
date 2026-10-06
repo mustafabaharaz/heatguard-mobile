@@ -89,7 +89,7 @@ const SegmentedRow: React.FC<SegmentedRowProps> = ({ icon, label, options, value
       {options.map((opt) => {
         const active = opt.value === value;
         return (
-          <PressableScale key={opt.value} onPress={() => onChange(opt.value)} hapticStyle="selection">
+          <PressableScale key={opt.value} onPress={() => onChange(opt.value)} hapticStyle="selection" style={{ flex: 1 }}>
             <View style={[styles.segmentItem, active && styles.segmentItemActive]}>
               <Text style={[styles.segmentLabel, active && styles.segmentLabelActive]}>{opt.label}</Text>
             </View>
@@ -122,7 +122,7 @@ const NavRow: React.FC<NavRowProps> = ({ icon, label, description, onPress, sepa
 
 export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
-  const { tempUnit, setTempUnit } = useSettings();
+  const { tempUnit, setTempUnit, appTheme, setAppTheme } = useSettings();
   const [prefs, setPrefs] = useState<NotificationPrefs>(getNotificationPrefs());
   const [osNotificationsOn, setOsNotificationsOn] = useState(true);
 
@@ -201,8 +201,24 @@ export default function SettingsScreen() {
             icon="thermometer-outline" label="Temperature"
             options={[{ label: '°F', value: 'fahrenheit' }, { label: '°C', value: 'celsius' }]}
             value={tempUnit} onChange={(v) => setTempUnit(v as 'fahrenheit' | 'celsius')}
+          />
+          <SegmentedRow
+            icon="contrast-outline" label="Appearance"
+            options={[
+              { label: 'Automatic', value: 'system' },
+              { label: 'High Sun', value: 'light' },
+              { label: 'Night Shift', value: 'dark' },
+            ]}
+            value={appTheme} onChange={(v) => setAppTheme(v as 'system' | 'light' | 'dark')}
             separator={false}
           />
+          <Text style={styles.appearanceNote}>
+            {appTheme === 'system'
+              ? 'Follows your iPhone: High Sun by day, Night Shift when your phone is in dark mode.'
+              : appTheme === 'light'
+                ? 'High Sun: bold black on light. Easiest to read outdoors in bright sun.'
+                : 'Night Shift: soft light-on-navy. Easier on the eyes at night.'}
+          </Text>
         </Section>
 
         <Section title="Notifications">
@@ -280,5 +296,6 @@ const styles = StyleSheet.create({
   segmentItemActive: { backgroundColor: C.surface, borderWidth: 1, borderColor: C.border },
   segmentLabel: { fontSize: 14, color: C.textSecondary },
   segmentLabelActive: { color: C.text, fontWeight: '600' },
+  appearanceNote: { fontSize: 12, color: C.textSecondary, lineHeight: 16, paddingHorizontal: 16, paddingBottom: 12, marginTop: -4 },
   versionText: { fontSize: 12, color: C.textTertiary, textAlign: 'center', marginTop: 8, marginBottom: 16 },
 });

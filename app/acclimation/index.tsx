@@ -26,6 +26,12 @@ import {
   type AcclimationState,
 } from '../../src/features/acclimation/acclimationStorage';
 import { getHeatProfile } from '../../src/features/profile/storage/profileStorage';
+import { riskGroups } from '../../src/features/risk/riskEngine';
+import {
+  ACCLIM_HEADLINE, ACCLIM_PITCH, ACCLIM_CHANGES, ACCLIM_WHY_NOW, ACCLIM_HOW,
+  ACCLIM_FOR, ACCLIM_NOT_FOR, ACCLIM_SOURCES,
+} from '../../src/content/acclimationAbout';
+import { Linking } from 'react-native';
 
 const COLORS = {
   background: '#0A1628',
@@ -40,6 +46,69 @@ const COLORS = {
   warning: '#F59E0B',
   error: '#EF4444',
 };
+
+// ─── About acclimation ────────────────────────────────────────────────────────
+
+function AboutAcclimation({ needsDoctor }: { needsDoctor: boolean }) {
+  return (
+    <View style={styles.about}>
+      <Text style={styles.aboutHeadline}>{ACCLIM_HEADLINE}</Text>
+      <Text style={styles.aboutPitch}>{ACCLIM_PITCH}</Text>
+
+      <Text style={styles.aboutLabel}>WHAT CHANGES IN YOUR BODY</Text>
+      <View style={styles.aboutGrid}>
+        {ACCLIM_CHANGES.map(ch => (
+          <View key={ch.title} style={styles.aboutTile}>
+            <Text style={styles.aboutTileTitle}>{ch.title}</Text>
+            <Text style={styles.aboutTileBody}>{ch.body}</Text>
+          </View>
+        ))}
+      </View>
+
+      <Text style={styles.aboutLabel}>WHY IT MATTERS</Text>
+      {ACCLIM_WHY_NOW.map(t => (
+        <View key={t} style={styles.aboutRow}>
+          <View style={styles.aboutDot} />
+          <Text style={styles.aboutText}>{t}</Text>
+        </View>
+      ))}
+
+      <Text style={styles.aboutLabel}>HOW THE PROGRAM WORKS</Text>
+      {ACCLIM_HOW.map(t => (
+        <View key={t} style={styles.aboutRow}>
+          <View style={styles.aboutDot} />
+          <Text style={styles.aboutText}>{t}</Text>
+        </View>
+      ))}
+
+      <Text style={styles.aboutLabel}>MADE FOR</Text>
+      {ACCLIM_FOR.map(t => (
+        <View key={t} style={styles.aboutRow}>
+          <Text style={styles.aboutCheck}>✓</Text>
+          <Text style={styles.aboutText}>{t}</Text>
+        </View>
+      ))}
+
+      <View style={[styles.doctorNote, needsDoctor && styles.doctorNoteStrong]}>
+        <Text style={styles.doctorTitle}>{needsDoctor ? 'Check with your doctor first' : 'Not for everyone'}</Text>
+        <Text style={styles.doctorBody}>{ACCLIM_NOT_FOR}</Text>
+      </View>
+
+      <Text style={styles.aboutLabel}>SOURCES</Text>
+      {ACCLIM_SOURCES.map(src => (
+        <TouchableOpacity
+          key={src.url}
+          onPress={() => Linking.openURL(src.url).catch(() => Alert.alert('Could not open link', src.url))}
+          accessibilityRole="link"
+          style={styles.sourceRow}
+        >
+          <Text style={styles.sourceTitle}>{src.title}</Text>
+          <Text style={styles.sourceWho}>{src.who}  ↗</Text>
+        </TouchableOpacity>
+      ))}
+    </View>
+  );
+}
 
 // ─── Phase Progress Bar ───────────────────────────────────────────────────────
 
@@ -159,6 +228,7 @@ function DayCard({
 export default function AcclimationScreen() {
   const [state, setState] = useState<AcclimationState>(getAcclimationState);
   const [expandedDay, setExpandedDay] = useState<number | null>(null);
+  const [showAbout, setShowAbout] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
@@ -178,9 +248,24 @@ export default function AcclimationScreen() {
   const score = getAcclimationScore(state.completedDays.length);
   const streak = getStreak(state);
 
+  // Older adults, chronic conditions, daily medicines: doctor first
+  const needsDoctor = (() => {
+    const g = riskGroups(profile);
+    return g.includes('age') || g.includes('condition') || g.includes('medicines');
+  })();
+
+  const begin = () => setState(startAcclimationProgram());
+
   const handleStart = () => {
-    const newState = startAcclimationProgram();
-    setState(newState);
+    if (!needsDoctor) { begin(); return; }
+    Alert.alert(
+      'Check with your doctor first',
+      'Your profile shows age 65+, a health condition, or daily medicines. Adding heat exposure can be risky. Has your doctor said this program is OK for you?',
+      [
+        { text: 'Not yet', style: 'cancel' },
+        { text: 'Yes, my doctor said OK', onPress: begin },
+      ],
+    );
   };
 
   const handleCompleteDay = (day: number) => {
@@ -278,18 +363,16 @@ export default function AcclimationScreen() {
           )}
         </View>
 
-        {/* ── Science Callout ──────────────────────────────────────────────── */}
-        {!state.isActive && !isComplete && (
-          <View style={styles.scienceCard}>
-            <Text style={styles.scienceTitle}>Why 14 Days?</Text>
-            <Text style={styles.scienceBody}>
-              Heat acclimation triggers plasma volume expansion, lowers your
-              core temperature set-point, and makes your sweat glands more
-              efficient — but these adaptations take 10–14 days to fully
-              manifest. Rushing it is dangerous. This protocol is derived from
-              sports medicine research used by military and elite athletes.
-            </Text>
-          </View>
+        {/* ── Why acclimate (full before starting, tap to open after) ───── */}
+        {!state.isActive && !isComplete ? (
+          <AboutAcclimation needsDoctor={needsDoctor} />
+        ) : (
+          <>
+            <TouchableOpacity onPress={() => setShowAbout(v => !v)} style={styles.aboutToggle} accessibilityRole="button">
+              <Text style={styles.aboutToggleText}>{showAbout ? 'Hide: why acclimate?' : 'Why acclimate?  ›'}</Text>
+            </TouchableOpacity>
+            {showAbout && <AboutAcclimation needsDoctor={needsDoctor} />}
+          </>
         )}
 
         {/* ── Start CTA ───────────────────────────────────────────────────── */}
@@ -299,7 +382,7 @@ export default function AcclimationScreen() {
             onPress={handleStart}
             activeOpacity={0.8}
           >
-            <Text style={styles.startButtonText}>Start 14-Day Program</Text>
+            <Text style={styles.startButtonText}>Start my 14-day program</Text>
           </TouchableOpacity>
         )}
 
@@ -377,6 +460,33 @@ export default function AcclimationScreen() {
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
+  about: { marginHorizontal: 20, marginTop: 16, gap: 10 },
+  aboutHeadline: { color: COLORS.text.primary, fontSize: 24, fontWeight: '800', letterSpacing: -0.3 },
+  aboutPitch: { color: COLORS.text.secondary, fontSize: 16, lineHeight: 23 },
+  aboutLabel: { color: COLORS.text.tertiary, fontSize: 12, fontWeight: '700', letterSpacing: 1.4, marginTop: 10 },
+  aboutGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  aboutTile: {
+    flexBasis: '47%', flexGrow: 1, backgroundColor: COLORS.surface, borderRadius: 14,
+    borderWidth: 1, borderColor: COLORS.border, padding: 12, gap: 4,
+  },
+  aboutTileTitle: { color: COLORS.text.primary, fontSize: 15, fontWeight: '700' },
+  aboutTileBody: { color: COLORS.text.secondary, fontSize: 13, lineHeight: 18 },
+  aboutRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
+  aboutDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: COLORS.warning, marginTop: 8 },
+  aboutCheck: { color: COLORS.success, fontSize: 15, fontWeight: '800', marginTop: 1 },
+  aboutText: { flex: 1, color: COLORS.text.primary, fontSize: 15, lineHeight: 22 },
+  doctorNote: {
+    backgroundColor: COLORS.surface, borderRadius: 14, borderWidth: 1, borderColor: COLORS.border,
+    padding: 14, gap: 4, marginTop: 6,
+  },
+  doctorNoteStrong: { borderColor: COLORS.warning, backgroundColor: '#2A2410' },
+  doctorTitle: { color: COLORS.warning, fontSize: 15, fontWeight: '800' },
+  doctorBody: { color: COLORS.text.primary, fontSize: 14, lineHeight: 20 },
+  sourceRow: { minHeight: 48, justifyContent: 'center', borderBottomWidth: 1, borderBottomColor: COLORS.border, paddingVertical: 8 },
+  sourceTitle: { color: COLORS.text.primary, fontSize: 14, fontWeight: '600' },
+  sourceWho: { color: COLORS.primary, fontSize: 13, marginTop: 2 },
+  aboutToggle: { marginHorizontal: 20, marginTop: 12, minHeight: 44, justifyContent: 'center' },
+  aboutToggleText: { color: COLORS.primary, fontSize: 15, fontWeight: '700' },
   container: { flex: 1, backgroundColor: COLORS.background },
   scroll: { flex: 1 },
   scrollContent: { paddingBottom: 48 },

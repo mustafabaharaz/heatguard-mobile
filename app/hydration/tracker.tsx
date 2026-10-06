@@ -10,6 +10,7 @@ import {
   Dimensions,
 } from 'react-native';
 import Svg, { Circle } from 'react-native-svg';
+import { Trash2, RotateCcw } from 'lucide-react-native';
 import { router, useFocusEffect } from 'expo-router';
 import {
   calculateHydrationTarget,
@@ -160,8 +161,13 @@ function LogItem({ log, onDelete }: { log: HydrationLog; onDelete: () => void })
       <Text style={styles.logTime}>{time}</Text>
       <Text style={styles.logAmount}>{formatMl(log.amountMl)}</Text>
       <Text style={styles.logAmountOz}>({mlToOz(log.amountMl)} oz)</Text>
-      <TouchableOpacity onPress={onDelete} style={styles.logDelete} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-        <Text style={styles.logDeleteText}>×</Text>
+      <TouchableOpacity
+        onPress={onDelete}
+        style={styles.logDelete}
+        accessibilityRole="button"
+        accessibilityLabel={`Remove ${mlToOz(log.amountMl)} ounces logged at ${time}`}
+      >
+        <Trash2 size={20} color="#F87171" />
       </TouchableOpacity>
     </View>
   );
@@ -215,6 +221,20 @@ export default function HydrationTrackerScreen() {
   const handleDelete = (id: string) => {
     removeHydrationLog(id);
     setLogs(getHydrationLogs());
+  };
+
+  const handleResetToday = () => {
+    Alert.alert('Reset today?', "This removes everything you've logged today.", [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Reset',
+        style: 'destructive',
+        onPress: () => {
+          todayLogs.forEach(l => removeHydrationLog(l.id));
+          setLogs(getHydrationLogs());
+        },
+      },
+    ]);
   };
 
   return (
@@ -366,6 +386,15 @@ export default function HydrationTrackerScreen() {
                 />
               ))}
             </View>
+            <TouchableOpacity
+              onPress={handleResetToday}
+              style={styles.resetBtn}
+              accessibilityRole="button"
+              accessibilityLabel="Reset today's water log"
+            >
+              <RotateCcw size={18} color="#F87171" />
+              <Text style={styles.resetText}>Reset today</Text>
+            </TouchableOpacity>
           </View>
         )}
 
@@ -521,6 +550,10 @@ const styles = StyleSheet.create({
   logTime: { color: COLORS.text.tertiary, fontSize: 12, width: 52 },
   logAmount: { color: COLORS.text.primary, fontSize: 14, fontWeight: '600', flex: 1 },
   logAmountOz: { color: COLORS.text.tertiary, fontSize: 12 },
-  logDelete: { width: 28, height: 28, alignItems: 'center', justifyContent: 'center' },
-  logDeleteText: { color: COLORS.text.tertiary, fontSize: 18, fontWeight: '300' },
+  logDelete: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center', marginRight: -10 },
+  resetBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+    minHeight: 48, marginTop: 10, borderRadius: 12, borderWidth: 1, borderColor: '#7F1D1D',
+  },
+  resetText: { color: '#F87171', fontSize: 15, fontWeight: '700' },
 });

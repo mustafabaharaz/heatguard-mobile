@@ -1,9 +1,10 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // FILE: app/onboarding/index.tsx
 // HeatGuard · Onboarding
-// Three short intro slides → "Who are you protecting?" → required safety &
-// medical acknowledgment. Shown on first launch (and again if the disclaimer
-// version changes).
+// Three short intro slides → "Who are you protecting?" → "Your home" (only
+// for older adults, people living alone, or with a health condition) →
+// required safety & medical acknowledgment. Shown on first launch (and again
+// if the disclaimer version changes).
 // ─────────────────────────────────────────────────────────────────────────────
 
 import React, { useRef, useState } from 'react';
@@ -23,11 +24,18 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import HeatGuardMark from '../../src/components/brand/HeatGuardMark';
 import HouseholdQuestions from '../../src/components/profile/HouseholdQuestions';
+import HomeSurroundingsQuestions, {
+  answersFromDraft, draftFromAnswers, isDraftComplete, type HomeDraft,
+} from '../../src/components/profile/HomeSurroundingsQuestions';
 import { DISCLAIMER_POINTS, DISCLAIMER_TITLE } from '../../src/content/disclaimer';
 import { acceptDisclaimer } from '../../src/features/settings/appPrefs';
 import {
+  getHeatProfile,
   getHouseholdAnswers,
   saveHouseholdAnswers,
+  getHomeAnswers,
+  saveHomeAnswers,
+  isHomeVulnerable,
   type HouseholdAnswers,
 } from '../../src/features/profile/storage/profileStorage';
 
@@ -85,12 +93,21 @@ export default function OnboardingScreen() {
   const [index, setIndex] = useState(0);
 
   const [household, setHousehold] = useState<HouseholdAnswers>(() => getHouseholdAnswers());
+  const [home, setHome] = useState<HomeDraft>(() => {
+    const p = getHeatProfile();
+    return draftFromAnswers(getHomeAnswers(p), p.homeAnswered);
+  });
 
-  const householdIndex = SLIDES.length;      // after the intro slides
-  const disclaimerIndex = SLIDES.length + 1; // last page
+  // "Your home" page only for older adults, living alone, or health conditions
+  const showHome = isHomeVulnerable({ ...getHeatProfile(), ...household });
+
+  const householdIndex = SLIDES.length;                     // after the intro slides
+  const homeIndex = showHome ? SLIDES.length + 1 : -1;
+  const disclaimerIndex = SLIDES.length + (showHome ? 2 : 1); // last page
   const onHousehold = index === householdIndex;
+  const onHome = index === homeIndex;
   const onDisclaimer = index === disclaimerIndex;
-  const pageCount = SLIDES.length + 2;
+  const pageCount = disclaimerIndex + 1;
 
   const goTo = (i: number) => {
     setIndex(i);
@@ -103,6 +120,7 @@ export default function OnboardingScreen() {
 
   const handleAccept = () => {
     saveHouseholdAnswers(household);
+    if (showHome && isDraftComplete(home)) saveHomeAnswers(answersFromDraft(home));
     acceptDisclaimer();
     router.replace('/(tabs)');
   };
@@ -152,6 +170,17 @@ export default function OnboardingScreen() {
           <HouseholdQuestions value={household} onChange={setHousehold} colors={HOUSEHOLD_COLORS} />
         </ScrollView>
 
+        {/* Your home (vulnerable households only) */}
+        {showHome && (
+          <ScrollView style={{ width }} contentContainerStyle={styles.formPage}>
+            <Text style={styles.formTitle}>Your home</Text>
+            <Text style={styles.formIntro}>
+              Most heat deaths happen at home. Tell us about your cooling so HeatGuard can look out for you. You can skip this.
+            </Text>
+            <HomeSurroundingsQuestions value={home} onChange={setHome} colors={HOUSEHOLD_COLORS} />
+          </ScrollView>
+        )}
+
         {/* Safety & medical acknowledgment */}
         <ScrollView style={{ width }} contentContainerStyle={styles.formPage}>
           <Text style={styles.formTitle}>{DISCLAIMER_TITLE}</Text>
@@ -189,7 +218,9 @@ export default function OnboardingScreen() {
             activeOpacity={0.85}
             accessibilityRole="button"
           >
-            <Text style={styles.primaryButtonText}>{onHousehold ? 'Continue' : 'Next'}</Text>
+            <Text style={styles.primaryButtonText}>
+              {onHome && !isDraftComplete(home) ? 'Skip for now' : onHousehold || onHome ? 'Continue' : 'Next'}
+            </Text>
           </TouchableOpacity>
         )}
       </View>

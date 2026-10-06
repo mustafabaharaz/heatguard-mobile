@@ -3,8 +3,9 @@
 // HeatGuard · Profile
 //  - Heat profile (health, age, alert level)
 //  - Who I'm protecting (dependents)
-//  - Home & lifestyle answers
-//  - Emergency contacts
+//  - Home & lifestyle answers, Home surroundings (AC)
+//  - Daily check-in (times, safety check, heat buddy)
+//  - Emergency contacts & heat buddies
 //  - Notifications & settings, app info
 // Skins: High Sun (light) / Night Shift (dark).
 // ─────────────────────────────────────────────────────────────────────────────
@@ -15,13 +16,16 @@ import { StatusBar } from 'expo-status-bar';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
-  HeartPulse, Users, Home, Phone, Settings, ChevronRight, UserRound,
+  HeartPulse, Users, Home, Phone, Settings, ChevronRight, UserRound, AirVent, BellRing,
 } from 'lucide-react-native';
 import { useSettings } from '../../src/context/SettingsContext';
 import { getContacts } from '../../src/features/emergency/storage/contactStorage';
-import { getHeatProfile, type HeatProfile } from '../../src/features/profile/storage/profileStorage';
+import {
+  getHeatProfile, isHomeVulnerable, needsSafetyCheck, type HeatProfile,
+} from '../../src/features/profile/storage/profileStorage';
 import { getDependents, joinNames, type Dependent } from '../../src/features/profile/storage/dependentsStorage';
-import { getDailyCheckIn, formatCheckInTime } from '../../src/features/checkin/dailyCheckIn';
+import { getDailyCheckIn, formatCheckInTimes } from '../../src/features/checkin/dailyCheckIn';
+import type { EmergencyContact } from '../../src/features/emergency/types/contact.types';
 
 const SKIN = {
   light: {
@@ -61,13 +65,24 @@ type Skin = typeof SKIN.light;
 function householdSummary(p: HeatProfile): string {
   if (!p.householdAnswered) return 'Not answered yet';
   const parts: string[] = [];
-  if (p.worksOutdoors) parts.push('Works or exercises outdoors');
+  if (p.drivesWithKids || p.drivesWithPets) parts.push('Car riders');
+  if (p.worksOutdoors) parts.push('Outdoors');
   if (p.livesAlone) parts.push('Lives alone');
-  if (p.noAC) parts.push('No AC');
-  else if (p.acUnreliable) parts.push('Unreliable AC');
-  const ci = getDailyCheckIn();
-  parts.push(ci.enabled ? `Daily check-in ${formatCheckInTime(ci)}` : 'Daily check-in off');
+  if (p.isElderly) parts.push('65+');
+  return parts.length ? parts.join(' · ') : 'Answered';
+}
+
+function homeSummary(p: HeatProfile): string {
+  if (!p.homeAnswered) return 'Your AC at home, cooling tips, bill help';
+  if (p.noAC) return 'No AC · cooling tips & bill help';
+  const parts = [p.acUnreliable ? 'AC not always reliable' : 'AC works'];
+  if (p.acOffToSave) parts.push('sometimes off to save');
   return parts.join(' · ');
+}
+
+function checkInSummary(): string {
+  const ci = getDailyCheckIn();
+  return ci.enabled ? `${formatCheckInTimes(ci)} · "Are you OK?"` : 'Off · up to 3 "Are you OK?" a day';
 }
 
 interface RowProps {
@@ -119,14 +134,19 @@ export default function ProfileScreen() {
 
   const [profile, setProfile] = useState<HeatProfile>(getHeatProfile());
   const [dependents, setDependents] = useState<Dependent[]>([]);
-  const [contactCount, setContactCount] = useState(0);
+  const [contacts, setContacts] = useState<EmergencyContact[]>([]);
 
   // Tabs stay mounted: refresh every time Profile comes into view
   useFocusEffect(useCallback(() => {
     setProfile(getHeatProfile());
     setDependents(getDependents());
-    try { setContactCount(getContacts().length); } catch { setContactCount(0); }
+    try { setContacts(getContacts()); } catch { setContacts([]); }
   }, []));
+
+  const contactCount = contacts.length;
+  const buddyCount = contacts.filter(ct => ct.isBuddy).length;
+  const checkInOn = getDailyCheckIn().enabled;
+  const flagged = needsSafetyCheck(profile);
 
   const name = profile.name.trim() || 'Your profile';
   const heatSub = profile.profileComplete
@@ -169,6 +189,28 @@ export default function ProfileScreen() {
             sub={householdSummary(profile)}
             badge={profile.householdAnswered ? undefined : 'Answer'}
             onPress={() => router.push('/profile/household')}
+          />
+          <Row
+            c={c}
+            icon={<AirVent size={24} color={c.text} />}
+            title="Home surroundings"
+            sub={homeSummary(profile)}
+            badge={!profile.homeAnswered && isHomeVulnerable(profile) ? 'Answer' : undefined}
+            onPress={() => router.push('/profile/home')}
+            last
+          />
+        </View>
+
+        {/* ── Safety ───────────────────────────────────────────────────────── */}
+        <Text style={[styles.sectionLabel, { color: c.muted }]}>Safety</Text>
+        <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border, borderWidth }]}>
+          <Row
+            c={c}
+            icon={<BellRing size={24} color={c.text} />}
+            title="Daily check-in"
+            sub={checkInSummary()}
+            badge={!checkInOn && flagged ? 'Recommended' : undefined}
+            onPress={() => router.push('/checkin/settings')}
             last
           />
         </View>
@@ -187,7 +229,9 @@ export default function ProfileScreen() {
             c={c}
             icon={<Phone size={24} color={c.text} />}
             title="Emergency contacts"
-            sub={contactCount ? `${contactCount} ${contactCount === 1 ? 'contact' : 'contacts'} · used by SOS` : 'Needed so SOS can reach someone'}
+            sub={contactCount
+              ? `${contactCount} ${contactCount === 1 ? 'contact' : 'contacts'} · ${buddyCount ? `${buddyCount} heat ${buddyCount === 1 ? 'buddy' : 'buddies'}` : 'no heat buddy yet'}`
+              : 'Needed so SOS can reach someone'}
             badge={contactCount ? undefined : 'Add'}
             onPress={() => router.push('/emergency/contacts')}
             last

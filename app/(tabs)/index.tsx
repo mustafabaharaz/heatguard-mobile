@@ -1,12 +1,17 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // FILE: app/(tabs)/index.tsx
 // HeatGuard · Home
-//  - Compact color-coded temperature chip (taps through to the forecast)
-//  - Two-line heat summary: what to do + your personal risk
-//  - "Needs your attention" card (one item at a time, most urgent first)
+//  - Greeting with location and current temperature, then today's
+//    risk card (BriefHeroCard, shared risk engine). Taps to "Your heat risk"
+//    (app/risk), which explains how the level is measured.
+//    Settings live in Profile; no settings icon here.
+//  - "Needs your attention" card (one item at a time, most urgent first);
+//    a due check-in opens the check-in screen (/checkin)
 //  - Quick tiles: Hydration (+1 cup) and Vehicle check (only if kids/pets ride
 //    along; otherwise the offline Emergency card)
 //  - A short list of tools; last-updated time at the bottom
+// Every tappable card uses TactileCard: a solid ledge behind it that the
+// card sinks into when pressed. Arrows mark cards that open another screen.
 // Skins: High Sun (light) / Night Shift (dark). SOS lives in the tab bar.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -16,9 +21,13 @@ import { StatusBar } from 'expo-status-bar';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
-  Droplet, Car, Plus, Bell, ChevronRight, Settings, LifeBuoy,
-  Newspaper, Snowflake, Activity, UserRound, MapPin,
+  Droplet, Car, Plus, Bell, LifeBuoy,
+  Snowflake, Activity, UserRound, MapPin, ArrowRight, Pill, Minus,
 } from 'lucide-react-native';
+import { getTodayPeakFeelsF } from '../../src/features/risk/riskEngine';
+import BriefHeroCard from '../../src/components/brief/BriefHeroCard';
+import { buildTodayBrief } from '../../src/features/brief/todayBrief';
+import TactileCard from '../../src/components/ui/TactileCard';
 import haptics from '../../src/utils/haptics';
 import { useSettings } from '../../src/context/SettingsContext';
 import { useWeather } from '../../src/services/weather/useWeather';
@@ -30,13 +39,15 @@ import {
 } from '../../src/services/notifications/push';
 import { getNotificationPrefs } from '../../src/features/settings/appPrefs';
 import {
-  getHeatProfile, getRiskMultiplier, hasVehicleDependents, hasCoolingRisk, type HeatProfile,
+  getHeatProfile, hasVehicleDependents, hasCoolingRisk, isHomeVulnerable, type HeatProfile,
 } from '../../src/features/profile/storage/profileStorage';
 import { PassiveTracker } from '../../src/features/exposure/passiveTracker';
 import {
   calculateHydrationTarget, computeHydrationSummary, mlToOz, type HydrationSummary,
 } from '../../src/features/hydration/hydrationEngine';
-import { addHydrationLog, getHydrationLogs } from '../../src/features/hydration/hydrationStorage';
+import {
+  addHydrationLog, getHydrationLogs, getTodayHydrationLogs, removeHydrationLog,
+} from '../../src/features/hydration/hydrationStorage';
 import { getCachedBrief, generateDailyBrief, cacheBrief } from '../../src/features/brief/briefEngine';
 import { getAcclimationScore } from '../../src/features/acclimation/acclimationEngine';
 import { getAcclimationState } from '../../src/features/acclimation/acclimationStorage';
@@ -46,7 +57,7 @@ import {
 import { getContacts } from '../../src/features/emergency/storage/contactStorage';
 import { carRiderNames, joinNames } from '../../src/features/profile/storage/dependentsStorage';
 import {
-  getCheckInStatus, confirmToday, planDailyCheckIns, isSuggestionDismissed, dismissSuggestion, formatCheckInTime,
+  getCheckInStatus, planDailyCheckIns, isSuggestionDismissed, dismissSuggestion, getDueTimeLabel, formatNextCheckIn,
 } from '../../src/features/checkin/dailyCheckIn';
 import { textContacts } from '../../src/features/emergency/emergencyMessaging';
 import {
@@ -75,6 +86,9 @@ const SKIN = {
     onBtnDark: '#FFFFFF',
     track: '#E2E2DC',
     pressed: '#ECECE6',
+    cardBorder: '#0A0A0A',
+    ledge: '#0A0A0A',
+    iconBadge: '#F4F4F0',
   },
   dark: {
     bg: '#0B1220',
@@ -95,83 +109,33 @@ const SKIN = {
     onBtnDark: '#04121F',
     track: '#24314F',
     pressed: '#1A2540',
+    cardBorder: '#3A4C78',
+    ledge: '#2A3A5E',
+    iconBadge: '#0B1220',
   },
 };
 
 type Skin = typeof SKIN.light;
 
-// ─── Heat levels (from feels-like °C) ─────────────────────────────────────────
+// ─── Hydration colors: red → amber → green as you near the target ────────────
 
-type Level = 'safe' | 'caution' | 'high' | 'extreme' | 'crisis';
-
-function levelFromFeelsC(c: number): Level {
-  if (c >= 46) return 'crisis';
-  if (c >= 40) return 'extreme';
-  if (c >= 35) return 'high';
-  if (c >= 30) return 'caution';
-  return 'safe';
+function hexToRgb(h: string) {
+  const n = parseInt(h.slice(1), 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
 }
-
-const LEVEL_LABEL: Record<Level, string> = {
-  safe: 'Safe',
-  caution: 'Caution',
-  high: 'High Alert',
-  extreme: 'Extreme',
-  crisis: 'Crisis',
-};
-
-const LEVEL_SUMMARY: Record<Level, string> = {
-  safe: 'Comfortable right now. Stay aware as the day warms up.',
-  caution: 'Hot out. Take shade breaks and drink water often.',
-  high: 'Dangerous heat. Limit time outside and avoid hard work.',
-  extreme: 'Extreme heat. Stay indoors in the afternoon if you can.',
-  crisis: 'Life-threatening heat. Stay somewhere cool.',
-};
-
-function chipColors(level: Level, isDark: boolean) {
-  if (isDark) {
-    const fg = { safe: '#4ADE80', caution: '#FACC15', high: '#FB923C', extreme: '#F87171', crisis: '#E879F9' }[level];
-    return { bg: '#131C2E', fg, border: fg };
-  }
-  const map: Record<Level, { bg: string; fg: string }> = {
-    safe: { bg: '#15803D', fg: '#FFFFFF' },
-    caution: { bg: '#FACC15', fg: '#0A0A0A' },
-    high: { bg: '#EA580C', fg: '#0A0A0A' },
-    extreme: { bg: '#B91C1C', fg: '#FFFFFF' },
-    crisis: { bg: '#6B21A8', fg: '#FFFFFF' },
-  };
-  return { ...map[level], border: map[level].bg };
+function mix(a: string, b: string, t: number): string {
+  const A = hexToRgb(a), B = hexToRgb(b);
+  const c = A.map((v, i) => Math.round(v + (B[i] - v) * t));
+  return `#${c.map(v => v.toString(16).padStart(2, '0')).join('')}`;
 }
-
-// ─── Personal risk ────────────────────────────────────────────────────────────
-
-type Personal = 'low' | 'moderate' | 'high' | 'veryHigh';
-
-function personalRisk(tempC: number, multiplier: number): Personal {
-  const adjusted = tempC * multiplier;
-  if (adjusted >= 52 || tempC >= 40) return 'veryHigh';
-  if (adjusted >= 42 || tempC >= 35) return 'high';
-  if (adjusted >= 34 || tempC >= 30) return 'moderate';
-  return 'low';
+function ramp(stops: [string, string, string], pct: number): string {
+  const t = Math.max(0, Math.min(1, pct / 100));
+  return t < 0.5 ? mix(stops[0], stops[1], t * 2) : mix(stops[1], stops[2], (t - 0.5) * 2);
 }
-
-const PERSONAL_LABEL: Record<Personal, string> = {
-  low: 'Low',
-  moderate: 'Moderate',
-  high: 'High',
-  veryHigh: 'Very high',
-};
-
-function riskReasons(p: HeatProfile): string {
-  const r: string[] = [];
-  if (p.isElderly) r.push('age');
-  if (p.hasHeartDisease) r.push('heart');
-  if (p.hasDiabetes) r.push('diabetes');
-  if (p.hasRespiratoryIssues) r.push('breathing');
-  if (p.takesMedications) r.push('medications');
-  if (p.noAC) r.push('no AC');
-  else if (p.acUnreliable) r.push('unreliable AC');
-  return r.join(', ');
+function hydrationColors(pct: number, isDark: boolean) {
+  return isDark
+    ? { bg: ramp(['#3B1219', '#3A2E0B', '#0F2E1C'], pct), fill: ramp(['#F87171', '#FBBF24', '#4ADE80'], pct) }
+    : { bg: ramp(['#FECACA', '#FDE68A', '#BBF7D0'], pct), fill: ramp(['#DC2626', '#D97706', '#16A34A'], pct) };
 }
 
 function greeting(): string {
@@ -230,6 +194,16 @@ export default function HomeScreen() {
     recomputeHydration();
   };
 
+  /** Undo the most recent entry logged today (mis-taps on +). */
+  const removeLast = () => {
+    const today = getTodayHydrationLogs()
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+    if (!today.length) return;
+    removeHydrationLog(today[0].id);
+    haptics.selection();
+    recomputeHydration();
+  };
+
   // ── Refresh local state whenever Home is shown ─────────────────────────────
   useFocusEffect(useCallback(() => {
     const p = getHeatProfile();
@@ -250,6 +224,7 @@ export default function HomeScreen() {
         cacheBrief(generateDailyBrief({
           profile: p,
           forecastHighF: todayHighF,
+          forecastFeelsMaxF: getTodayPeakFeelsF(snapshot) ?? undefined,
           hydrationTargetOz: mlToOz(target.dailyTargetMl),
           hydrationPercentComplete: summary.percentComplete,
           acclimationDay: acclim.isActive ? acclim.currentDay : null,
@@ -354,8 +329,8 @@ export default function HomeScreen() {
   // ── Derived values ─────────────────────────────────────────────────────────
   const tempC = Math.round(fToC(snapshot.current.tempF));
   const feelsC = Math.round(fToC(snapshot.current.feelsLikeF));
-  const level = levelFromFeelsC(feelsC);
-  const chip = chipColors(level, isDark);
+  // Today's brief, built live so Home and the brief always match
+  const brief = buildTodayBrief(snapshot, profile);
   const locationName = snapshot.locationName ?? 'Your location';
   const ageMins = snapshotAgeMinutes(snapshot);
   const updatedLabel =
@@ -363,11 +338,15 @@ export default function HomeScreen() {
     (weatherError ? ' · offline' : '');
 
   const firstName = profile.name.trim().split(' ')[0];
-  const personal = personalRisk(tempC, getRiskMultiplier(profile));
-  const reasons = riskReasons(profile);
   const showVehicle = hasVehicleDependents(profile) || riders.length > 0;
   const coolingRisk = hasCoolingRisk(profile);
   const checkInStatus = getCheckInStatus();
+  const nextCheckIn = formatNextCheckIn();
+  const checkInSub =
+    checkInStatus === 'off' ? 'Off. Tap to set up.'
+      : checkInStatus === 'due' ? 'Due now. Tap to check in.'
+        : checkInStatus === 'done' ? `Done for today.${nextCheckIn ? ` Next ${nextCheckIn}.` : ''}`
+          : `Next ${nextCheckIn ?? 'soon'}.`;
   const riderText = riders.length
     ? `${joinNames(riders)} aboard?`
     : `${profile.drivesWithKids && profile.drivesWithPets ? 'Kids & pets' : profile.drivesWithKids ? 'Kids' : 'Pets'} aboard?`;
@@ -419,13 +398,14 @@ export default function HomeScreen() {
       },
     };
   } else if (checkInStatus === 'due') {
+    const dueAt = getDueTimeLabel();
     attention = {
       urgent: true,
-      title: 'Daily check-in: are you OK?',
-      body: `Your check-in was at ${formatCheckInTime()}. Tap below so HeatGuard knows you are safe.`,
+      title: 'Check-in: are you OK?',
+      body: `${dueAt ? `Your ${dueAt} check-in is waiting.` : 'Your check-in is waiting.'} Tap below so HeatGuard knows you are safe.`,
       primary: {
-        label: "I'm OK",
-        onPress: async () => { await confirmToday(); haptics.selection(); setTick(t => t + 1); },
+        label: 'Check in',
+        onPress: () => router.push('/checkin'),
       },
       secondary: {
         label: 'Text my contacts',
@@ -436,8 +416,15 @@ export default function HomeScreen() {
     attention = {
       urgent: false,
       title: 'Who are you protecting?',
-      body: 'Answer 4 quick questions so HeatGuard shows the right tools for you.',
+      body: 'A few quick taps so HeatGuard shows the right tools for you.',
       primary: { label: 'Answer now', onPress: () => router.push('/profile/household') },
+    };
+  } else if (!profile.homeAnswered && isHomeVulnerable(profile)) {
+    attention = {
+      urgent: false,
+      title: 'How cool does your home stay?',
+      body: 'Three quick questions about your AC. HeatGuard adds free cooling tips and bill help if you need them.',
+      primary: { label: 'Answer now', onPress: () => router.push('/profile/home') },
     };
   } else if (contactCount === 0) {
     attention = {
@@ -448,97 +435,80 @@ export default function HomeScreen() {
         : 'So SOS can text someone your location if you need help.',
       primary: { label: 'Add a contact', onPress: () => router.push('/emergency/contacts') },
     };
-  } else if ((profile.livesAlone || coolingRisk) && checkInStatus === 'off' && !isSuggestionDismissed()) {
+  } else if ((isHomeVulnerable(profile) || coolingRisk) && checkInStatus === 'off' && !isSuggestionDismissed()) {
     attention = {
       urgent: false,
-      title: 'Turn on a daily check-in',
+      title: 'Turn on daily check-ins',
       body: profile.livesAlone
         ? 'You live alone. A daily "Are you OK?" makes it easy to reach someone if the heat gets to you.'
-        : 'Your home cooling may not be reliable. A daily "Are you OK?" makes it easy to reach someone if it fails.',
-      primary: { label: 'Set it up', onPress: () => router.push('/profile/household') },
+        : coolingRisk
+          ? 'Your home cooling may not be reliable. A daily "Are you OK?" makes it easy to reach someone if it fails.'
+          : 'A daily "Are you OK?" with a quick home safety check, shared with a heat buddy if you like.',
+      primary: { label: 'Set it up', onPress: () => router.push('/checkin/settings') },
       secondary: { label: 'Not now', onPress: () => { dismissSuggestion(); setTick(t => t + 1); } },
     };
   }
-  const hydrationBehind = !!hydration && (hydration.status === 'behind' || hydration.status === 'critical');
+  const hydroColors = hydrationColors(hydrationPct, isDark);
 
   // ── Render ─────────────────────────────────────────────────────────────────
+  const card = { faceColor: c.card, borderColor: c.cardBorder, ledgeColor: c.ledge, borderWidth: isDark ? 1.5 : 2 };
+
+  const tools = [
+    ...(coolingRisk && showVehicle ? [{ label: 'Cool Spots near you', Icon: MapPin, href: '/map' }] : []),
+    { label: 'Cool-down timer', Icon: Snowflake, href: '/cooldown/timer' },
+    ...(profile.worksOutdoors || profile.activityLevel === 'high'
+      ? [{ label: 'Heat acclimation', Icon: Activity, href: '/acclimation' }]
+      : []),
+    ...(profile.takesMedications ? [{ label: 'Medicines & heat', Icon: Pill, href: '/profile/medications' }] : []),
+    ...(showVehicle || coolingRisk ? [{ label: 'Emergency info card', Icon: LifeBuoy, href: '/offline/emergency-card' }] : []),
+  ];
+
   return (
     <View style={[styles.container, { backgroundColor: c.bg }]}>
       <StatusBar style={isDark ? 'light' : 'dark'} />
       <ScrollView
-        contentContainerStyle={[styles.content, { paddingTop: insets.top + 12 }]}
+        contentContainerStyle={[styles.content, { paddingTop: insets.top + 8 }]}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={c.muted} />}
       >
         {/* ── Header ───────────────────────────────────────────────────────── */}
-        <View style={styles.topRow}>
-          <Text style={[styles.location, { color: c.muted }]} numberOfLines={1}>{locationName}</Text>
-          <Pressable
-            onPress={() => router.push('/settings')}
-            accessibilityRole="button"
-            accessibilityLabel="Settings"
-            style={styles.iconBtn}
-            hitSlop={6}
-          >
-            <Settings size={22} color={c.muted} />
-          </Pressable>
-        </View>
-        <View style={styles.header}>
-          <Text
-            style={[styles.greeting, { color: c.text }]}
-            accessibilityRole="header"
-            numberOfLines={2}
-          >
-            {firstName ? `${greeting()},\n${firstName}` : greeting()}
-          </Text>
-          <Pressable
-            onPress={() => router.push('/intelligence/forecast')}
-            accessibilityRole="button"
-            accessibilityLabel={`${formatTemp(tempC)}, feels like ${formatTemp(feelsC)}, ${LEVEL_LABEL[level]}. Open forecast`}
-            style={({ pressed }) => [
-              styles.chip,
-              { backgroundColor: chip.bg, borderColor: chip.border, opacity: pressed ? 0.85 : 1 },
-            ]}
-          >
-            <Text style={[styles.chipTemp, { color: chip.fg }]}>{formatTemp(tempC, false)}</Text>
-            <Text style={[styles.chipLabel, { color: chip.fg }]}>{LEVEL_LABEL[level]}</Text>
-          </Pressable>
-        </View>
-
-        {/* ── Summary ──────────────────────────────────────────────────────── */}
-        <View
-          style={[
-            styles.summary,
-            isDark
-              ? { backgroundColor: c.card, padding: 14, borderRadius: 14 }
-              : { borderTopWidth: 3, borderTopColor: c.text, paddingTop: 10 },
-          ]}
+        <Text
+          style={[styles.greeting, { color: c.text }]}
+          accessibilityRole="header"
+          numberOfLines={1}
+          adjustsFontSizeToFit
+          minimumFontScale={0.6}
         >
-          <Text style={[styles.summaryText, { color: c.text }]}>{LEVEL_SUMMARY[level]}</Text>
-          {profile.profileComplete ? (
-            <Pressable
-              onPress={profile.takesMedications ? () => router.push('/profile/medications') : undefined}
-              disabled={!profile.takesMedications}
-              accessibilityRole={profile.takesMedications ? 'button' : 'text'}
-              accessibilityHint={profile.takesMedications ? 'Opens medication heat tips' : undefined}
-              style={styles.personalRow}
-            >
-              <Text style={[styles.personal, { color: c.text }]}>
-                Your risk: <Text style={styles.personalStrong}>{PERSONAL_LABEL[personal]}</Text>
-                {reasons ? <Text style={{ color: c.muted }}> · {reasons}</Text> : null}
-              </Text>
-              {profile.takesMedications && <ChevronRight size={18} color={c.muted} />}
-            </Pressable>
-          ) : (
-            <Pressable
-              onPress={() => router.push('/profile/heat-profile')}
-              accessibilityRole="button"
-              style={styles.inlineLink}
-            >
-              <UserRound size={18} color={c.accent} />
-              <Text style={[styles.inlineLinkText, { color: c.accent }]}>Set up your heat profile for your personal risk</Text>
-            </Pressable>
-          )}
-        </View>
+          {firstName ? `${greeting()}, ${firstName}` : greeting()}
+        </Text>
+
+        {/* ── Today's risk card ────────────────────────────────────────── */}
+        {brief && (
+          <TactileCard
+            faceColor="transparent"
+            borderColor="transparent"
+            ledgeColor={c.ledge}
+            borderWidth={0}
+            radius={20}
+            onPress={() => router.push('/risk')}
+            accessibilityLabel={`Today: ${brief.headline} ${brief.forecastSummary} Risk level ${Math.round(brief.overallScore / 25)} of 4.`}
+            accessibilityHint="Explains how your heat risk is measured"
+          >
+            <BriefHeroCard
+              brief={brief}
+              now={{
+                location: locationName,
+                reading: `Now ${formatTemp(tempC, false)} · feels ${formatTemp(feelsC, false)}`,
+              }}
+            />
+          </TactileCard>
+        )}
+
+        {!profile.profileComplete && (
+          <Pressable onPress={() => router.push('/profile/heat-profile')} accessibilityRole="button" style={styles.inlineLink}>
+            <UserRound size={18} color={c.accent} />
+            <Text style={[styles.inlineLinkText, { color: c.accent }]}>Set up your heat profile for your personal risk</Text>
+          </Pressable>
+        )}
 
         {/* ── Needs your attention ─────────────────────────────────────────── */}
         {attention && (
@@ -548,7 +518,7 @@ export default function HomeScreen() {
               {
                 backgroundColor: attention.urgent ? c.urgentBg : c.attentionBg,
                 borderColor: c.attentionBorder,
-                borderWidth,
+                borderWidth: card.borderWidth,
               },
             ]}
             accessibilityRole="alert"
@@ -562,24 +532,22 @@ export default function HomeScreen() {
             <Text style={[styles.attentionTitle, { color: c.text }]}>{attention.title}</Text>
             <Text style={[styles.attentionBody, { color: c.text }]}>{attention.body}</Text>
             <View style={styles.attentionActions}>
-              <Pressable
+              <TactileCard
+                faceColor={c.btnDark}
+                borderColor={c.btnDark}
+                ledgeColor={isDark ? c.ledge : '#3F3F3A'}
+                borderWidth={card.borderWidth}
+                radius={12}
                 onPress={attention.primary.onPress}
-                accessibilityRole="button"
-                style={({ pressed }) => [styles.solidBtn, styles.flex1, { backgroundColor: c.btnDark, opacity: pressed ? 0.85 : 1 }]}
+                containerStyle={styles.flex1}
+                style={styles.btnFace}
               >
                 <Text style={[styles.solidBtnText, { color: c.onBtnDark }]}>{attention.primary.label}</Text>
-              </Pressable>
+              </TactileCard>
               {attention.secondary && (
-                <Pressable
-                  onPress={attention.secondary.onPress}
-                  accessibilityRole="button"
-                  style={({ pressed }) => [
-                    styles.outlineBtn,
-                    { borderColor: c.border, borderWidth, backgroundColor: pressed ? c.pressed : c.card },
-                  ]}
-                >
+                <TactileCard {...card} radius={12} onPress={attention.secondary.onPress} style={styles.btnFace}>
                   <Text style={[styles.outlineBtnText, { color: c.text }]}>{attention.secondary.label}</Text>
-                </Pressable>
+                </TactileCard>
               )}
             </View>
           </View>
@@ -587,116 +555,150 @@ export default function HomeScreen() {
 
         {/* ── Quick tiles ──────────────────────────────────────────────────── */}
         <View style={styles.tiles}>
-          <Pressable
+          <TactileCard
+            {...card}
+            faceColor={hydroColors.bg}
+            containerStyle={styles.flex1}
+            style={styles.tile}
             onPress={() => router.push('/hydration/tracker')}
-            accessibilityRole="button"
-            accessibilityLabel={`Hydration, ${consumedOz} of ${targetOz} ounces. Open tracker`}
-            style={({ pressed }) => [
-              styles.tile,
-              { backgroundColor: pressed ? c.pressed : c.card, borderColor: c.border, borderWidth },
-            ]}
+            accessibilityLabel={`Hydration, ${consumedOz} of ${targetOz} ounces`}
+            accessibilityHint="Opens the hydration tracker"
           >
-            <View style={styles.tileTop}>
-              <Droplet size={26} color={c.accent} />
+            <View style={styles.tileTitleRow}>
+              <Text style={[styles.tileTitle, { color: c.text }]}>Hydration</Text>
+              <ArrowRight size={18} color={c.text} />
+            </View>
+            <View>
+              <Text style={[styles.tileBig, { color: c.text }]}>{consumedOz}</Text>
+              <Text style={[styles.tileBigUnit, { color: c.muted }]}>of {targetOz} oz</Text>
+            </View>
+            <View style={[styles.track, { backgroundColor: isDark ? 'rgba(255,255,255,0.14)' : 'rgba(10,10,10,0.12)' }]}>
+              <View style={[styles.trackFill, { width: `${hydrationPct}%`, backgroundColor: hydroColors.fill }]} />
+            </View>
+            <View style={styles.stepper}>
+              <Pressable
+                onPress={removeLast}
+                disabled={consumedOz === 0}
+                accessibilityRole="button"
+                accessibilityLabel="Undo last water entry"
+                accessibilityState={{ disabled: consumedOz === 0 }}
+                hitSlop={4}
+                style={({ pressed }) => [
+                  styles.stepBtn,
+                  {
+                    borderColor: c.cardBorder,
+                    borderWidth: card.borderWidth,
+                    backgroundColor: c.card,
+                    opacity: consumedOz === 0 ? 0.4 : 1,
+                    transform: [{ scale: pressed ? 0.92 : 1 }],
+                  },
+                ]}
+              >
+                <Minus size={20} color={c.text} strokeWidth={3} />
+              </Pressable>
               <Pressable
                 onPress={addCup}
                 accessibilityRole="button"
                 accessibilityLabel="Log one cup of water"
-                hitSlop={8}
-                style={({ pressed }) => [styles.plusBtn, { backgroundColor: c.accent, opacity: pressed ? 0.8 : 1 }]}
+                hitSlop={4}
+                style={({ pressed }) => [
+                  styles.stepBtn,
+                  styles.stepAdd,
+                  { backgroundColor: c.accent, transform: [{ scale: pressed ? 0.95 : 1 }] },
+                ]}
               >
-                <Plus size={22} color={c.onAccent} strokeWidth={3} />
+                <Plus size={20} color={c.onAccent} strokeWidth={3} />
               </Pressable>
             </View>
-            <Text style={[styles.tileTitle, { color: c.text }]}>Hydration</Text>
-            <Text style={[styles.tileBig, { color: c.text }]}>
-              {consumedOz}
-              <Text style={[styles.tileBigUnit, { color: c.muted }]}> / {targetOz} oz</Text>
-            </Text>
-            <View style={[styles.track, { backgroundColor: c.track }]}>
-              <View style={[styles.trackFill, { width: `${hydrationPct}%`, backgroundColor: c.accent }]} />
-            </View>
-            {hydrationBehind && (
-              <Text style={[styles.tileNudge, { color: c.urgentLabel }]}>Drink a cup now</Text>
-            )}
-          </Pressable>
+          </TactileCard>
 
           {showVehicle ? (
-            <Pressable
+            <TactileCard
+              {...card}
+              containerStyle={styles.flex1}
+              style={styles.tile}
               onPress={() => router.push('/vehicle/alert')}
-              accessibilityRole="button"
-              accessibilityLabel="Vehicle check. Start a timer when you park"
-              style={({ pressed }) => [
-                styles.tile,
-                { backgroundColor: pressed ? c.pressed : c.card, borderColor: c.border, borderWidth },
-              ]}
+              accessibilityLabel="Vehicle check"
+              accessibilityHint="Start a timer when you park"
             >
-              <Car size={26} color={c.vehicle} />
-              <Text style={[styles.tileTitle, { color: c.text }]}>Vehicle check</Text>
+              <View style={styles.tileTitleRow}>
+                <Text style={[styles.tileTitle, { color: c.text }]}>Vehicle check</Text>
+                <ArrowRight size={18} color={c.text} />
+              </View>
               <Text style={[styles.tileSub, { color: c.muted }]}>
                 {vehicleSession
                   ? `Timer running · ${vehicleMinutes} min`
-                  : `${riderText} Start a timer when you park.`}
+                  : 'Start a timer when you park.'}
               </Text>
-            </Pressable>
+            </TactileCard>
           ) : coolingRisk ? (
-            <Pressable
+            <TactileCard
+              {...card}
+              containerStyle={styles.flex1}
+              style={styles.tile}
               onPress={() => router.push('/map')}
-              accessibilityRole="button"
-              accessibilityLabel="Cool Spots. Cooling centers near you"
-              style={({ pressed }) => [
-                styles.tile,
-                { backgroundColor: pressed ? c.pressed : c.card, borderColor: c.border, borderWidth },
-              ]}
+              accessibilityLabel="Cool Spots"
+              accessibilityHint="Cooling centers near you"
             >
-              <MapPin size={26} color={c.accent} />
-              <Text style={[styles.tileTitle, { color: c.text }]}>Cool Spots</Text>
-              <Text style={[styles.tileSub, { color: c.muted }]}>Cooling centers near you, with hours and directions.</Text>
-            </Pressable>
+              <View style={styles.tileTitleRow}>
+                <Text style={[styles.tileTitle, { color: c.text }]}>Cool Spots</Text>
+                <ArrowRight size={18} color={c.text} />
+              </View>
+              <Text style={[styles.tileSub, { color: c.muted }]}>Cooling centers near you.</Text>
+            </TactileCard>
           ) : (
-            <Pressable
+            <TactileCard
+              {...card}
+              containerStyle={styles.flex1}
+              style={styles.tile}
               onPress={() => router.push('/offline/emergency-card')}
-              accessibilityRole="button"
-              accessibilityLabel="Emergency info card. Works offline"
-              style={({ pressed }) => [
-                styles.tile,
-                { backgroundColor: pressed ? c.pressed : c.card, borderColor: c.border, borderWidth },
-              ]}
+              accessibilityLabel="Emergency info card"
+              accessibilityHint="Works offline"
             >
-              <LifeBuoy size={26} color={c.vehicle} />
-              <Text style={[styles.tileTitle, { color: c.text }]}>Emergency card</Text>
-              <Text style={[styles.tileSub, { color: c.muted }]}>Symptoms, what to do, and your contacts. Works offline.</Text>
-            </Pressable>
+              <View style={styles.tileTitleRow}>
+                <Text style={[styles.tileTitle, { color: c.text }]}>Emergency card</Text>
+                <ArrowRight size={18} color={c.text} />
+              </View>
+              <Text style={[styles.tileSub, { color: c.muted }]}>What to do. Works offline.</Text>
+            </TactileCard>
           )}
         </View>
 
+        {/* ── Daily check-in (full width) ──────────────────────────────────── */}
+        <TactileCard
+          {...card}
+          style={styles.wideTile}
+          onPress={() => router.push(checkInStatus === 'off' ? '/checkin/settings' : '/checkin')}
+          accessibilityLabel={`Daily check-in. ${checkInSub}`}
+          accessibilityHint={checkInStatus === 'off' ? 'Set up check-ins' : 'Check in now'}
+        >
+          <View style={styles.flex1}>
+            <Text style={[styles.tileTitle, { color: c.text, fontSize: 17 }]}>Daily check-in</Text>
+            <Text style={[styles.tileSub, { color: checkInStatus === 'due' ? c.urgentLabel : c.muted }, checkInStatus === 'due' && styles.strong]}>
+              {checkInSub}
+            </Text>
+          </View>
+          <ArrowRight size={22} color={c.text} />
+        </TactileCard>
+
         {/* ── More tools ───────────────────────────────────────────────────── */}
         <Text style={[styles.sectionLabel, { color: c.muted }]}>More tools</Text>
-        <View style={[styles.list, { backgroundColor: c.card, borderColor: c.border, borderWidth }]}>
-          {[
-            ...(coolingRisk && showVehicle ? [{ label: 'Cool Spots near you', Icon: MapPin, href: '/map' }] : []),
-            { label: 'Daily brief', Icon: Newspaper, href: '/brief' },
-            { label: 'Cool-down timer', Icon: Snowflake, href: '/cooldown/timer' },
-            { label: 'Heat acclimation', Icon: Activity, href: '/acclimation' },
-            ...(showVehicle || coolingRisk ? [{ label: 'Emergency info card', Icon: LifeBuoy, href: '/offline/emergency-card' }] : []),
-          ].map((item, i, arr) => (
-            <Pressable
+        <View style={styles.toolList}>
+          {tools.map(item => (
+            <TactileCard
               key={item.href}
+              {...card}
+              radius={14}
+              style={styles.toolRow}
               onPress={() => router.push(item.href as any)}
-              accessibilityRole="button"
-              style={({ pressed }) => [
-                styles.listRow,
-                {
-                  backgroundColor: pressed ? c.pressed : 'transparent',
-                  borderBottomColor: c.divider,
-                  borderBottomWidth: i < arr.length - 1 ? 1 : 0,
-                },
-              ]}
+              accessibilityLabel={item.label}
             >
-              <item.Icon size={22} color={c.text} />
+              <View style={[styles.toolIcon, { backgroundColor: c.iconBadge }]}>
+                <item.Icon size={20} color={c.text} />
+              </View>
               <Text style={[styles.listLabel, { color: c.text }]}>{item.label}</Text>
-              <ChevronRight size={20} color={c.muted} />
-            </Pressable>
+              <ArrowRight size={20} color={c.text} />
+            </TactileCard>
           ))}
         </View>
 
@@ -715,34 +717,28 @@ const styles = StyleSheet.create({
   noWeatherTitle: { fontSize: 22, fontWeight: '800', marginBottom: 8, textAlign: 'center' },
   noWeatherText: { fontSize: 16, textAlign: 'center', lineHeight: 23, marginBottom: 20 },
 
-  content: { paddingHorizontal: 20, paddingBottom: 40, gap: 14 },
+  content: { paddingHorizontal: 20, paddingBottom: 40, gap: 12 },
   flex1: { flex: 1 },
+  strong: { fontWeight: '800' },
 
-  topRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: -14 },
-  header: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  location: { fontSize: 14, fontWeight: '700' },
-  greeting: { flex: 1, fontSize: 26, fontWeight: '800', letterSpacing: -0.3, lineHeight: 31 },
-  iconBtn: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
-  chip: {
-    minHeight: 56,
-    minWidth: 76,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 14,
-    borderWidth: 1.5,
-    alignItems: 'flex-end',
-    justifyContent: 'center',
-  },
-  chipTemp: { fontSize: 26, fontWeight: '800', lineHeight: 28, fontVariant: ['tabular-nums'] },
-  chipLabel: { fontSize: 12, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 0.5 },
+  greeting: { fontSize: 26, fontWeight: '800', letterSpacing: -0.3, marginTop: 8, textAlign: 'center' },
+  nowRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, marginTop: -6, marginBottom: 4 },
+  nowText: { fontSize: 15, fontWeight: '700', flexShrink: 1 },
 
-  summary: { gap: 4 },
-  summaryText: { fontSize: 17, fontWeight: '700', lineHeight: 23 },
-  summaryMeta: { fontSize: 14 },
-  personalRow: { flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: 32 },
-  personal: { flex: 1, fontSize: 15, lineHeight: 21 },
-  personalStrong: { fontWeight: '800' },
-  inlineLink: { flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 44 },
+  heroBand: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingTop: 14, paddingBottom: 12, gap: 12 },
+  heroLocation: { flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 2 },
+  heroLocationText: { fontSize: 14, fontWeight: '700', flexShrink: 1 },
+  heroNow: { fontSize: 30, fontWeight: '800', lineHeight: 34, letterSpacing: -0.5, fontVariant: ['tabular-nums'] },
+  heroFeels: { fontSize: 15, fontWeight: '700' },
+  heroPill: { alignSelf: 'center', borderRadius: 999, paddingHorizontal: 12, paddingVertical: 6 },
+  heroPillText: { fontSize: 13, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 0.6 },
+  heroBody: { paddingHorizontal: 16, paddingTop: 14, gap: 6 },
+  heroMessage: { fontSize: 18, fontWeight: '800', lineHeight: 24, textAlign: 'center' },
+  heroForecast: { fontSize: 15, lineHeight: 21, textAlign: 'center' },
+  heroFooter: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderTopWidth: 1, marginTop: 6, minHeight: 48 },
+  heroLink: { fontSize: 16, fontWeight: '800' },
+
+  inlineLink: { flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 44, marginTop: -4 },
   inlineLinkText: { fontSize: 15, fontWeight: '700', flexShrink: 1 },
 
   attention: { borderRadius: 16, padding: 16, gap: 8 },
@@ -750,33 +746,38 @@ const styles = StyleSheet.create({
   attentionLabel: { fontSize: 13, fontWeight: '800', letterSpacing: 0.8, textTransform: 'uppercase' },
   attentionTitle: { fontSize: 20, fontWeight: '800', lineHeight: 25 },
   attentionBody: { fontSize: 16, lineHeight: 22 },
-  attentionActions: { flexDirection: 'row', gap: 10, marginTop: 4 },
+  attentionActions: { flexDirection: 'row', gap: 8, marginTop: 4 },
+  btnFace: { minHeight: 52, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 16 },
 
   solidBtn: { minHeight: 52, borderRadius: 12, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 16 },
   solidBtnText: { fontSize: 17, fontWeight: '800' },
   outlineBtn: { minHeight: 52, borderRadius: 12, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 16 },
   outlineBtnText: { fontSize: 17, fontWeight: '700' },
 
-  tiles: { flexDirection: 'row', gap: 12 },
-  tile: { flex: 1, borderRadius: 16, padding: 14, gap: 8, minHeight: 156 },
+  tiles: { flexDirection: 'row', gap: 8 },
+  wideTile: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: 12, minHeight: 68, borderRadius: 14 },
+  tile: { padding: 12, gap: 6, minHeight: 132, flexGrow: 1, borderRadius: 14 },
+  stepper: { flexDirection: 'row', gap: 6, marginTop: 'auto' },
+  stepBtn: { flex: 1, height: 44, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  stepAdd: { flexDirection: 'row', gap: 4 },
+  stepAddText: { fontSize: 16, fontWeight: '800' },
   tileTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  iconBadge: { width: 44, height: 44, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
   plusBtn: { width: 44, height: 44, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
-  tileTitle: { fontSize: 16, fontWeight: '800' },
-  tileBig: { fontSize: 28, fontWeight: '800', fontVariant: ['tabular-nums'] },
-  tileBigUnit: { fontSize: 15, fontWeight: '600' },
-  tileSub: { fontSize: 15, lineHeight: 20 },
+  tileTitleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 6 },
+  tileTitle: { fontSize: 15, fontWeight: '800', flexShrink: 1 },
+  tileBig: { fontSize: 26, fontWeight: '800', lineHeight: 30, fontVariant: ['tabular-nums'] },
+  tileBigUnit: { fontSize: 13, fontWeight: '700' },
+  tileSub: { fontSize: 14, lineHeight: 19 },
   track: { height: 8, borderRadius: 4, overflow: 'hidden' },
-  tileNudge: { fontSize: 14, fontWeight: '800' },
-  footer: { fontSize: 13, textAlign: 'center', marginTop: 4 },
   trackFill: { height: 8, borderRadius: 4 },
+  tileNudge: { fontSize: 14, fontWeight: '800' },
 
-  row: { flexDirection: 'row', alignItems: 'center', gap: 14, borderRadius: 16, padding: 16, minHeight: 72 },
-  rowText: { flex: 1, gap: 2 },
-  rowTitle: { fontSize: 17, fontWeight: '800' },
-  rowSub: { fontSize: 14, lineHeight: 19 },
-
-  sectionLabel: { fontSize: 13, fontWeight: '800', letterSpacing: 0.8, textTransform: 'uppercase', marginTop: 6 },
-  list: { borderRadius: 16, overflow: 'hidden' },
-  listRow: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 16, minHeight: 56 },
+  sectionLabel: { fontSize: 13, fontWeight: '800', letterSpacing: 0.8, textTransform: 'uppercase', marginTop: 8 },
+  toolList: { gap: 4 },
+  toolRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 12, minHeight: 60 },
+  toolIcon: { width: 36, height: 36, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
   listLabel: { flex: 1, fontSize: 16, fontWeight: '700' },
+
+  footer: { fontSize: 13, textAlign: 'center', marginTop: 4 },
 });

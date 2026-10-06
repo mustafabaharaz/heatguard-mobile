@@ -1,12 +1,13 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // FILE: src/components/profile/HouseholdQuestions.tsx
-// HeatGuard · "Home & lifestyle" questions
+// HeatGuard · "Home & lifestyle" questions (tap-to-check rows)
 // Used by onboarding and by app/profile/household.tsx.
+// Home AC questions moved to HomeSurroundingsQuestions.tsx.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
-import { Check, Baby, PawPrint, Sun, Home, AirVent, Fan } from 'lucide-react-native';
+import { Check, Baby, PawPrint, Sun, Home, Armchair, HeartPulse } from 'lucide-react-native';
 import type { HouseholdAnswers } from '../../features/profile/storage/profileStorage';
 
 export interface HouseholdColors {
@@ -28,9 +29,9 @@ const QUESTIONS: {
   { key: 'drivesWithKids', label: 'Kids ride in my car', hint: 'Back-seat checks and reminders on hot days', Icon: Baby },
   { key: 'drivesWithPets', label: 'Pets ride in my car', hint: 'Back-seat checks and reminders on hot days', Icon: PawPrint },
   { key: 'worksOutdoors', label: 'I work or exercise outdoors', hint: 'Safer hours and activity prep', Icon: Sun },
-  { key: 'livesAlone', label: 'I live alone', hint: 'A daily check-in so someone knows you are OK', Icon: Home },
-  { key: 'noAC', label: 'No AC at home', hint: 'Cooling centers near you, front and center', Icon: AirVent },
-  { key: 'acUnreliable', label: 'My AC is old or unreliable', hint: 'A plan for when it stops working', Icon: Fan },
+  { key: 'livesAlone', label: 'I live alone', hint: 'Check-ins so someone knows you are OK', Icon: Home },
+  { key: 'isElderly', label: "I'm 65 or older", hint: 'Heat hits harder with age; extra safeguards', Icon: Armchair },
+  { key: 'healthConcern', label: 'Heart, lung, or diabetes condition', hint: 'These raise heat risk; extra safeguards', Icon: HeartPulse },
 ];
 
 interface Props {
@@ -39,53 +40,65 @@ interface Props {
   colors: HouseholdColors;
 }
 
-export default function HouseholdQuestions({ value, onChange, colors }: Props) {
-  const toggle = (key: keyof HouseholdAnswers) => {
-    const next = { ...value, [key]: !value[key] };
-    // "No AC" and "unreliable AC" can't both be true
-    if (key === 'noAC' && next.noAC) next.acUnreliable = false;
-    if (key === 'acUnreliable' && next.acUnreliable) next.noAC = false;
-    onChange(next);
-  };
+export function CheckRow({
+  label, hint, Icon, checked, onPress, colors,
+}: {
+  label: string;
+  hint: string;
+  Icon: typeof Baby;
+  checked: boolean;
+  onPress: () => void;
+  colors: HouseholdColors;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="checkbox"
+      accessibilityState={{ checked }}
+      accessibilityLabel={`${label}. ${hint}`}
+      style={({ pressed }) => [
+        styles.row,
+        {
+          backgroundColor: checked ? colors.selectedBg : colors.card,
+          borderColor: checked ? colors.accent : colors.border,
+          opacity: pressed ? 0.9 : 1,
+        },
+      ]}
+    >
+      <Icon size={26} color={checked ? colors.accent : colors.muted} />
+      <View style={styles.text}>
+        <Text style={[styles.label, { color: colors.text }]}>{label}</Text>
+        <Text style={[styles.hint, { color: colors.muted }]}>{hint}</Text>
+      </View>
+      <View
+        style={[
+          styles.box,
+          {
+            borderColor: checked ? colors.accent : colors.border,
+            backgroundColor: checked ? colors.accent : 'transparent',
+          },
+        ]}
+      >
+        {checked && <Check size={18} color={colors.onAccent} strokeWidth={3} />}
+      </View>
+    </Pressable>
+  );
+}
 
+export default function HouseholdQuestions({ value, onChange, colors }: Props) {
   return (
     <View style={styles.list}>
-      {QUESTIONS.map(({ key, label, hint, Icon }) => {
-        const checked = value[key];
-        return (
-          <Pressable
-            key={key}
-            onPress={() => toggle(key)}
-            accessibilityRole="checkbox"
-            accessibilityState={{ checked }}
-            accessibilityLabel={`${label}. ${hint}`}
-            style={[
-              styles.row,
-              {
-                backgroundColor: checked ? colors.selectedBg : colors.card,
-                borderColor: checked ? colors.accent : colors.border,
-              },
-            ]}
-          >
-            <Icon size={26} color={checked ? colors.accent : colors.muted} />
-            <View style={styles.text}>
-              <Text style={[styles.label, { color: colors.text }]}>{label}</Text>
-              <Text style={[styles.hint, { color: colors.muted }]}>{hint}</Text>
-            </View>
-            <View
-              style={[
-                styles.box,
-                {
-                  borderColor: checked ? colors.accent : colors.border,
-                  backgroundColor: checked ? colors.accent : 'transparent',
-                },
-              ]}
-            >
-              {checked && <Check size={18} color={colors.onAccent} strokeWidth={3} />}
-            </View>
-          </Pressable>
-        );
-      })}
+      {QUESTIONS.map(({ key, label, hint, Icon }) => (
+        <CheckRow
+          key={key}
+          label={label}
+          hint={hint}
+          Icon={Icon}
+          checked={value[key]}
+          onPress={() => onChange({ ...value, [key]: !value[key] })}
+          colors={colors}
+        />
+      ))}
     </View>
   );
 }

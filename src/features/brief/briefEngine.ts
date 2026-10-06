@@ -1,6 +1,11 @@
 // ─── Daily Brief Engine ───────────────────────────────────────────────────────
 // Synthesizes forecast, personal risk profile, acclimation progress,
 // hydration status, and medication warnings into a single daily safety brief.
+// Risk level and score come from the shared engine (features/risk/riskEngine)
+// so the brief, Home, and alerts always agree.
+
+import type { HeatProfile } from '../profile/storage/profileStorage';
+import { assessRisk, RISK_HEADLINE, type RiskLevel, type NwsCategory, type RiskAssessment } from '../risk/riskEngine';
 
 // Matches the actual HeatProfile boolean-field shape from profileStorage
 interface ProfileInput {
@@ -20,14 +25,19 @@ interface ProfileInput {
   conditions?: string[];
 }
 
-export type BriefRiskLevel = 'low' | 'moderate' | 'high' | 'extreme';
+export type BriefRiskLevel = RiskLevel;
 
 export interface DailyBrief {
   date: string;
+  /** Ring fill, 25/50/75/100 = risk level 1–4 of 4 (not a clinical score) */
   overallScore: number;
   riskLevel: BriefRiskLevel;
+  nwsCategory?: NwsCategory;
+  /** True if the user's CDC risk group raised the level one step */
+  stepped?: boolean;
   headline: string;
   forecastHighF: number;
+  forecastFeelsMaxF: number;
   forecastSummary: string;
   personalRiskNote: string;
   hydrationTargetOz: number;
@@ -40,8 +50,10 @@ export interface DailyBrief {
 }
 
 export interface BriefInput {
-  profile: ProfileInput;
+  profile: HeatProfile;
   forecastHighF: number;
+  /** Today's peak feels-like; falls back to the high if missing */
+  forecastFeelsMaxF?: number;
   hydrationTargetOz: number;
   hydrationPercentComplete: number;
   acclimationDay: number | null;
@@ -49,96 +61,54 @@ export interface BriefInput {
   medicationWarnings: number;
 }
 
-// ─── Risk Multiplier ──────────────────────────────────────────────────────────
-
-function computeRiskMultiplier(profile: ProfileInput): number {
-  let multiplier = 1.0;
-
-  const age = Number(profile.age) || 35;
-  if (age > 70) multiplier *= 1.6;
-  else if (age > 65) multiplier *= 1.4;
-  else if (age > 55) multiplier *= 1.2;
-  else if (age < 12) multiplier *= 1.3;
-
-  const cond = profile.conditions ?? [];
-  if (profile.hasHeartDisease || cond.includes('heart_disease') || cond.includes('cardiac')) multiplier *= 1.5;
-  if (profile.hasDiabetes    || cond.includes('diabetes'))      multiplier *= 1.3;
-  if (profile.hasKidneyDisease || cond.includes('kidney_disease')) multiplier *= 1.25;
-  if (profile.isObese        || cond.includes('obesity'))       multiplier *= 1.2;
-
-  const activityPenalty: Record<string, number> = {
-    athlete: 0.85, active: 0.9, high: 0.9,
-    moderate: 1.0,
-    light: 1.1, low: 1.15, sedentary: 1.2, none: 1.2,
-  };
-  multiplier *= activityPenalty[profile.activityLevel] ?? 1.0;
-
-  if (profile.takesMedications || (profile.medications?.length ?? 0) > 0) multiplier *= 1.15;
-
-  return Math.min(multiplier, 3.0);
-}
-
 // ─── Brief Generator ──────────────────────────────────────────────────────────
 
 export function generateDailyBrief(input: BriefInput): DailyBrief {
   const { profile, forecastHighF, hydrationTargetOz, hydrationPercentComplete, acclimationDay, acclimationScore, medicationWarnings } = input;
 
-  const riskMultiplier = computeRiskMultiplier(profile);
-  const heatBase = Math.min(Math.max(Math.round(((forecastHighF - 65) / 65) * 100), 0), 100);
-  const overallScore = Math.min(Math.round(heatBase * riskMultiplier), 100);
-
-  const riskLevel: BriefRiskLevel =
-    overallScore < 25 ? 'low' : overallScore < 50 ? 'moderate' : overallScore < 75 ? 'high' : 'extreme';
-
-  const firstName = profile.name?.split(' ')[0] || 'there';
-  const headlines: Record<BriefRiskLevel, string> = {
-    low: `Good conditions today, ${firstName}. Stay aware.`,
-    moderate: `Warm day ahead, ${firstName}. Plan outdoor time carefully.`,
-    high: `High heat risk today. Limit outdoor exposure.`,
-    extreme: `Extreme danger. Stay indoors if at all possible.`,
-  };
+  const feelsMaxF = Math.round(Math.max(input.forecastFeelsMaxF ?? forecastHighF, forecastHighF));
+  const risk = assessRisk(feelsMaxF, profile);
+  const overallScore = risk.levelNumber * 25;
+  const riskLevel = risk.level;
 
   return {
     date: new Date().toDateString(),
     overallScore,
     riskLevel,
-    headline: headlines[riskLevel],
+    nwsCategory: risk.nws,
+    stepped: risk.stepped,
+    headline: RISK_HEADLINE[riskLevel],
     forecastHighF,
-    forecastSummary: buildForecastSummary(forecastHighF),
-    personalRiskNote: buildPersonalNote(profile, riskMultiplier, acclimationScore),
+    forecastFeelsMaxF: feelsMaxF,
+    forecastSummary: buildForecastSummary(forecastHighF, feelsMaxF),
+    personalRiskNote: buildPersonalNote(risk, acclimationScore),
     hydrationTargetOz,
     hydrationPercentComplete,
     acclimationDay,
     acclimationScore,
     medicationWarnings,
-    topRecommendations: buildRecommendations({ forecastHighF, hydrationPercentComplete, hydrationTargetOz, medicationWarnings, acclimationDay, profile }).slice(0, 4),
+    topRecommendations: buildRecommendations({ forecastHighF, hydrationPercentComplete, hydrationTargetOz, medicationWarnings, acclimationDay, profile: profile as unknown as ProfileInput }).slice(0, 4),
     generatedAt: new Date().toISOString(),
   };
 }
 
-function buildForecastSummary(tempF: number): string {
-  if (tempF >= 115) return `High of ${tempF}°F. Catastrophic heat — all outdoor plans cancelled.`;
-  if (tempF >= 110) return `High of ${tempF}°F. Life-threatening conditions. Avoid all outdoor exposure.`;
-  if (tempF >= 105) return `High of ${tempF}°F. Extreme heat. Outdoor activity strongly discouraged.`;
-  if (tempF >= 100) return `High of ${tempF}°F. Dangerous heat. Limit outdoor time severely.`;
-  if (tempF >= 95)  return `High of ${tempF}°F. Very hot. Stay hydrated and seek shade.`;
-  if (tempF >= 85)  return `High of ${tempF}°F. Hot conditions. Normal precautions apply.`;
-  return `High of ${tempF}°F. Manageable heat today.`;
+function buildForecastSummary(highF: number, feelsMaxF: number): string {
+  const feels = feelsMaxF > highF + 1 ? `, feels like ${feelsMaxF}°F` : '';
+  const base = `High of ${highF}°F${feels}.`;
+  if (feelsMaxF >= 112) return `${base} Life-threatening heat. Avoid being outside in the afternoon.`;
+  if (feelsMaxF >= 105) return `${base} Extreme heat. Keep outdoor time short.`;
+  if (feelsMaxF >= 95) return `${base} Very hot. Shade, water, and breaks.`;
+  if (feelsMaxF >= 85) return `${base} Hot. Normal precautions.`;
+  return `${base} Manageable heat today.`;
 }
 
-function buildPersonalNote(profile: ProfileInput, multiplier: number, acclimationScore: number): string {
-  const cond = profile.conditions ?? [];
-  if (profile.hasHeartDisease || cond.includes('heart_disease'))
-    return 'Your heart condition significantly amplifies heat strain. Take extra precautions.';
-  if ((Number(profile.age) || 0) > 70)
-    return 'Adults over 70 are at the highest risk in extreme heat. Stay cool and hydrated.';
-  if (profile.hasDiabetes || cond.includes('diabetes'))
-    return "Diabetes affects your body's cooling response. Monitor yourself closely.";
-  if (acclimationScore < 30)
-    return `You are only ${acclimationScore}% acclimated — your body is still adapting to this heat.`;
-  if (multiplier > 1.8)
-    return `Your personal risk multiplier is ${multiplier.toFixed(1)}×. Extra vigilance required.`;
-  return `Your risk profile is well-managed. Maintain good habits today.`;
+/** Calm, non-alarming note. Details live on the "Your heat risk" page. */
+function buildPersonalNote(risk: RiskAssessment, acclimationScore: number): string {
+  if (risk.groups.includes('outdoors') && acclimationScore < 30)
+    return 'You work or exercise outside and your body may not be used to the heat yet. Ease in, and see Heat acclimation in More tools.';
+  if (risk.stepped) return 'Heat affects you more than most, so your level is one step above the weather alone. Take it easy today.';
+  if (risk.groups.length) return 'Heat affects you more than most. Small breaks and water make a big difference.';
+  return 'Your level matches the weather today. Keep your usual habits.';
 }
 
 function buildRecommendations(params: {
@@ -173,21 +143,21 @@ function buildRecommendations(params: {
 // ─── Visual Helpers ───────────────────────────────────────────────────────────
 
 export function getRiskColor(level: BriefRiskLevel): string {
-  const map: Record<BriefRiskLevel, string> = { low: '#22C55E', moderate: '#F59E0B', high: '#F97316', extreme: '#EF4444' };
-  return map[level];
+  const map: Record<BriefRiskLevel, string> = { low: '#22C55E', moderate: '#F59E0B', high: '#F97316', veryHigh: '#EF4444' };
+  return map[level] ?? map.high;
 }
 
 export function getRiskGradient(level: BriefRiskLevel): readonly [string, string] {
   const map: Record<BriefRiskLevel, readonly [string, string]> = {
     low: ['#052e16', '#14532d'], moderate: ['#2d1a00', '#78350f'],
-    high: ['#2d0c00', '#7c2d12'], extreme: ['#1a0000', '#7f1d1d'],
+    high: ['#2d0c00', '#7c2d12'], veryHigh: ['#1a0000', '#7f1d1d'],
   };
-  return map[level];
+  return map[level] ?? map.high;
 }
 
 // ─── Cache ────────────────────────────────────────────────────────────────────
 
-const BRIEF_KEY = 'heatguard_daily_brief_v1';
+const BRIEF_KEY = 'heatguard_daily_brief_v3'; // v3: NWS categories + CDC risk groups
 
 const briefStore = {
   get: (): string | null => {
